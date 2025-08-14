@@ -49,28 +49,28 @@
   - Add termdebug availability verification during setup
   - _Requirements: 2.4, 7.1, 7.2, 7.3, 7.4_
 
-- [ ] 3. Expand test coverage for memory module
+- [x] 3. Expand test coverage for memory module
   - Create comprehensive unit tests for memory viewing and editing functions
   - Test hex dump formatting, navigation, and memory address parsing
   - Add tests for memory window creation, cleanup, and resource management
   - Test error conditions for invalid addresses and memory access failures
   - _Requirements: 3.1, 3.3_
 
-- [ ] 3.1 Expand test coverage for keymaps module
+- [x] 3.1 Expand test coverage for keymaps module
   - Create unit tests for keymap setup and cleanup functionality
   - Test breakpoint toggle logic with various GDB response scenarios
   - Add tests for async keymap operations and error handling
   - Test keymap conflict detection and resolution
   - _Requirements: 3.1, 3.4_
 
-- [ ] 3.2 Enhance test infrastructure and utilities
+- [x] 3.2 Enhance test infrastructure and utilities
   - Improve mock framework for Neovim APIs and GDB communication
   - Add helper functions for testing async operations with controlled timing
   - Create test fixtures for common GDB responses and error scenarios
   - Add test utilities for floating window and buffer management testing
   - _Requirements: 3.2, 3.5_
 
-- [ ] 3.3 Add integration tests for module interactions
+- [x] 3.3 Add integration tests for module interactions
   - Test interaction between utils and other modules for async operations
   - Test end-to-end workflows for debugging operations
   - Add tests for plugin lifecycle management and resource cleanup

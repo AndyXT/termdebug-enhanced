@@ -326,25 +326,50 @@ function M.evaluate_under_cursor()
     return
   end
 
-  get_gdb_response("print " .. word, function(response_lines)
+  -- Validate expression syntax
+  local valid, syntax_error = validate_expression(word)
+  if not valid then
+    local error_content = create_error_content({
+      type = "syntax",
+      message = syntax_error,
+      expression = word
+    })
+    local config = get_config()
+    create_float_window(error_content, config.popup, true)
+    return
+  end
+
+  get_gdb_response("print " .. word, word, function(response_lines, error_info)
+    local config = get_config()
+    
+    if error_info then
+      -- Show error in popup
+      local error_content = create_error_content(error_info)
+      create_float_window(error_content, config.popup, true)
+      return
+    end
+
     -- Format the output nicely
     local formatted = {}
-    table.insert(formatted, "Expression: " .. word)
+    table.insert(formatted, "✓ Expression: " .. word)
     table.insert(formatted, string.rep("─", 40))
 
     -- Try to extract just the value
-    local value = utils.extract_value(response_lines)
-    if value then
-      table.insert(formatted, value)
-    else
-      for _, line in ipairs(response_lines) do
-        table.insert(formatted, line)
+    if response_lines and #response_lines > 0 then
+      local value = utils.extract_value(response_lines)
+      if value then
+        table.insert(formatted, value)
+      else
+        for _, line in ipairs(response_lines) do
+          table.insert(formatted, line)
+        end
       end
+    else
+      table.insert(formatted, "No output")
     end
 
     -- Show in floating window
-    local config = get_config()
-    create_float_window(formatted, config.popup)
+    create_float_window(formatted, config.popup, false)
   end)
 end
 
@@ -352,12 +377,18 @@ end
 ---Evaluates the text selected in visual mode
 ---@return nil
 function M.evaluate_selection()
-  -- Get visual selection
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-  local selection_lines = vim.api.nvim_buf_get_lines(0, start_pos[2] - 1, end_pos[2], false)
-
-  if #selection_lines == 0 then
+  -- Get visual selection with error handling
+  local start_pos_ok, start_pos = pcall(vim.fn.getpos, "'<")
+  local end_pos_ok, end_pos = pcall(vim.fn.getpos, "'>")
+  
+  if not start_pos_ok or not end_pos_ok then
+    vim.notify("Could not get visual selection", vim.log.levels.ERROR)
+    return
+  end
+  
+  local selection_lines_ok, selection_lines = pcall(vim.api.nvim_buf_get_lines, 0, start_pos[2] - 1, end_pos[2], false)
+  if not selection_lines_ok or #selection_lines == 0 then
+    vim.notify("No text selected", vim.log.levels.WARN)
     return
   end
 
@@ -365,7 +396,9 @@ function M.evaluate_selection()
   if #selection_lines == 1 then
     -- Single line selection
     local line = selection_lines[1]
-    expr = line:sub(start_pos[3], end_pos[3])
+    local start_col = math.max(1, start_pos[3])
+    local end_col = math.min(#line, end_pos[3])
+    expr = line:sub(start_col, end_col)
   else
     -- Multi-line selection
     selection_lines[1] = selection_lines[1]:sub(start_pos[3])
@@ -373,23 +406,51 @@ function M.evaluate_selection()
     expr = table.concat(selection_lines, " ")
   end
 
+  -- Clean up expression
+  expr = vim.trim(expr)
   if expr == "" then
     vim.notify("No expression selected", vim.log.levels.WARN)
     return
   end
 
-  get_gdb_response("print " .. expr, function(response_lines)
+  -- Validate expression syntax
+  local valid, syntax_error = validate_expression(expr)
+  if not valid then
+    local error_content = create_error_content({
+      type = "syntax",
+      message = syntax_error,
+      expression = expr
+    })
+    local config = get_config()
+    create_float_window(error_content, config.popup, true)
+    return
+  end
+
+  get_gdb_response("print " .. expr, expr, function(response_lines, error_info)
+    local config = get_config()
+    
+    if error_info then
+      -- Show error in popup
+      local error_content = create_error_content(error_info)
+      create_float_window(error_content, config.popup, true)
+      return
+    end
+
     -- Format the output nicely
     local formatted = {}
-    table.insert(formatted, "Expression: " .. expr)
+    table.insert(formatted, "✓ Expression: " .. expr)
     table.insert(formatted, string.rep("─", 40))
-    for _, line in ipairs(response_lines) do
-      table.insert(formatted, line)
+    
+    if response_lines and #response_lines > 0 then
+      for _, line in ipairs(response_lines) do
+        table.insert(formatted, line)
+      end
+    else
+      table.insert(formatted, "No output")
     end
 
     -- Show in floating window
-    local config = get_config()
-    create_float_window(formatted, config.popup)
+    create_float_window(formatted, config.popup, false)
   end)
 end
 
@@ -398,25 +459,57 @@ end
 ---@return nil
 function M.evaluate_custom(expr)
   if not expr or expr == "" then
-    expr = vim.fn.input("Evaluate: ")
+    local input_ok, input_expr = pcall(vim.fn.input, "Evaluate: ")
+    if not input_ok then
+      vim.notify("Failed to get input", vim.log.levels.ERROR)
+      return
+    end
+    expr = input_expr
   end
 
+  expr = vim.trim(expr)
   if expr == "" then
     return
   end
 
-  get_gdb_response("print " .. expr, function(response_lines)
+  -- Validate expression syntax
+  local valid, syntax_error = validate_expression(expr)
+  if not valid then
+    local error_content = create_error_content({
+      type = "syntax",
+      message = syntax_error,
+      expression = expr
+    })
+    local config = get_config()
+    create_float_window(error_content, config.popup, true)
+    return
+  end
+
+  get_gdb_response("print " .. expr, expr, function(response_lines, error_info)
+    local config = get_config()
+    
+    if error_info then
+      -- Show error in popup
+      local error_content = create_error_content(error_info)
+      create_float_window(error_content, config.popup, true)
+      return
+    end
+
     -- Format the output nicely
     local formatted = {}
-    table.insert(formatted, "Expression: " .. expr)
+    table.insert(formatted, "✓ Expression: " .. expr)
     table.insert(formatted, string.rep("─", 40))
-    for _, line in ipairs(response_lines) do
-      table.insert(formatted, line)
+    
+    if response_lines and #response_lines > 0 then
+      for _, line in ipairs(response_lines) do
+        table.insert(formatted, line)
+      end
+    else
+      table.insert(formatted, "No output")
     end
 
     -- Show in floating window
-    local config = get_config()
-    create_float_window(formatted, config.popup)
+    create_float_window(formatted, config.popup, false)
   end)
 end
 

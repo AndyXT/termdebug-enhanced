@@ -29,7 +29,11 @@ end
 ---@param message string|nil Optional error message
 function M.assert_true(value, message)
   if not value then
-    error((message or "Expected true, got: ") .. vim.inspect(value))
+    if message then
+      error(message)
+    else
+      error("Expected true, got: " .. vim.inspect(value))
+    end
   end
 end
 
@@ -38,7 +42,11 @@ end
 ---@param message string|nil Optional error message
 function M.assert_false(value, message)
   if value then
-    error((message or "Expected false, got: ") .. vim.inspect(value))
+    if message then
+      error(message)
+    else
+      error("Expected false, got: " .. vim.inspect(value))
+    end
   end
 end
 
@@ -56,7 +64,11 @@ end
 ---@param message string|nil Optional error message
 function M.assert_not_nil(value, message)
   if value == nil then
-    error(message or "Expected non-nil value")
+    if message then
+      error(message)
+    else
+      error("Expected non-nil value")
+    end
   end
 end
 

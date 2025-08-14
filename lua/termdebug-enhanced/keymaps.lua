@@ -154,25 +154,47 @@ function M.setup_keymaps(keymaps)
 		return false, errors
 	end
 
+	-- Pre-validate keymap values but continue processing valid ones
+	local keymap_fields = {
+		"continue", "step_over", "step_into", "step_out", "stop", "restart",
+		"toggle_breakpoint", "evaluate", "evaluate_visual", "watch_add", 
+		"watch_remove", "memory_view", "memory_edit", "variable_set"
+	}
+
+	for _, field_name in ipairs(keymap_fields) do
+		local key_value = keymaps[field_name]
+		if key_value ~= nil then
+			if type(key_value) ~= "string" then
+				table.insert(errors, field_name .. " keymap must be a string")
+			elseif key_value == "" then
+				table.insert(errors, field_name .. " keymap cannot be empty")
+			elseif vim.trim(key_value) == "" then
+				table.insert(errors, field_name .. " keymap cannot be only whitespace")
+			end
+		end
+	end
+
+	-- Continue processing - we'll still set up valid keymaps and return the errors at the end
+
 	-- VSCode-like debugging keymaps (with safe access)
 	local mappings = {}
 
-	if keymaps.continue then
+	if keymaps.continue and keymaps.continue ~= "" then
 		mappings[keymaps.continue] = { cmd = "Continue", desc = "Continue execution" }
 	end
-	if keymaps.step_over then
+	if keymaps.step_over and keymaps.step_over ~= "" then
 		mappings[keymaps.step_over] = { cmd = "Over", desc = "Step over" }
 	end
-	if keymaps.step_into then
+	if keymaps.step_into and keymaps.step_into ~= "" then
 		mappings[keymaps.step_into] = { cmd = "Step", desc = "Step into" }
 	end
-	if keymaps.step_out then
+	if keymaps.step_out and keymaps.step_out ~= "" then
 		mappings[keymaps.step_out] = { cmd = "Finish", desc = "Step out" }
 	end
-	if keymaps.stop then
+	if keymaps.stop and keymaps.stop ~= "" then
 		mappings[keymaps.stop] = { cmd = "Stop", desc = "Stop debugging" }
 	end
-	if keymaps.restart then
+	if keymaps.restart and keymaps.restart ~= "" then
 		mappings[keymaps.restart] = {
 			cmd = function()
 				local stop_ok, stop_error = pcall(vim.cmd, "Stop")
@@ -229,7 +251,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Breakpoint toggle with proper toggle logic and error handling
-	if keymaps.toggle_breakpoint then
+	if keymaps.toggle_breakpoint and keymaps.toggle_breakpoint ~= "" then
 		total_count = total_count + 1
 
 		-- Validate keymap
@@ -343,7 +365,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Evaluate under cursor (like LSP hover)
-	if keymaps.evaluate then
+	if keymaps.evaluate and keymaps.evaluate ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.evaluate)
 		if not valid then
@@ -368,7 +390,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Evaluate visual selection
-	if keymaps.evaluate_visual then
+	if keymaps.evaluate_visual and keymaps.evaluate_visual ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.evaluate_visual)
 		if not valid then
@@ -396,7 +418,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Watch expressions
-	if keymaps.watch_add then
+	if keymaps.watch_add and keymaps.watch_add ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.watch_add)
 		if not valid then
@@ -436,7 +458,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Memory viewer
-	if keymaps.memory_view then
+	if keymaps.memory_view and keymaps.memory_view ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.memory_view)
 		if not valid then
@@ -461,7 +483,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Memory edit
-	if keymaps.memory_edit then
+	if keymaps.memory_edit and keymaps.memory_edit ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.memory_edit)
 		if not valid then
@@ -486,7 +508,7 @@ function M.setup_keymaps(keymaps)
 	end
 
 	-- Variable set
-	if keymaps.variable_set then
+	if keymaps.variable_set and keymaps.variable_set ~= "" then
 		total_count = total_count + 1
 		local valid, validation_error = validate_keymap(keymaps.variable_set)
 		if not valid then

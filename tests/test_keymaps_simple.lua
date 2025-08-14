@@ -1,17 +1,33 @@
 ---Simplified unit tests for termdebug-enhanced.keymaps module
 ---Run with: nvim --headless -u NONE -c "set rtp+=." -l tests/test_keymaps_simple.lua
 
+-- IMPORTANT: Clear any previously loaded modules to ensure mocks are used
+package.loaded["termdebug-enhanced.utils"] = nil
+package.loaded["termdebug-enhanced.keymaps"] = nil
+package.loaded["termdebug-enhanced.evaluate"] = nil
+package.loaded["termdebug-enhanced.memory"] = nil
+package.loaded["termdebug-enhanced"] = nil
+
 -- Load test helpers
 local helpers = require("tests.test_helpers")
 
 -- Mock the utils module
 package.loaded["termdebug-enhanced.utils"] = {
   async_gdb_response = function(cmd, callback, opts)
-    -- Immediate callback for testing
-    callback({}, nil)
+    -- Immediate callback for testing (no async delay)
+    if cmd:match("^display ") then
+      callback({}, nil)
+    elseif cmd:match("^set variable ") then
+      callback({}, nil)
+    else
+      callback({}, nil)
+    end
   end,
   parse_breakpoints = function() return {} end,
   find_breakpoint = function() return nil end,
+  track_resource = function() end,
+  untrack_resource = function() end,
+  cleanup_all_resources = function() return 0 end,
 }
 
 -- Mock the evaluate module
@@ -28,6 +44,10 @@ package.loaded["termdebug-enhanced.memory"] = {
 
 -- Mock vim globals
 vim.g.termdebug_running = true
+vim.fn.exists = function(cmd)
+  if cmd == ":Termdebug" then return 1 end
+  return 0
+end
 
 -- Mock keymap functions
 local set_keymaps = {}
@@ -85,8 +105,8 @@ local test_config = {
 
 -- Test: setup_keymaps with valid configuration
 function tests.test_setup_keymaps_valid()
-  set_keymaps = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.setup_keymaps(test_config)
   
@@ -98,8 +118,8 @@ end
 
 -- Test: setup_keymaps with invalid keymap
 function tests.test_setup_keymaps_invalid()
-  set_keymaps = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local invalid_config = {
     continue = "",  -- Invalid empty keymap
@@ -115,19 +135,19 @@ end
 
 -- Test: cleanup_keymaps
 function tests.test_cleanup_keymaps()
-  set_keymaps = {}
-  deleted_keymaps = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(deleted_keymaps) do deleted_keymaps[k] = nil end
   
   -- First set up keymaps
   keymaps.setup_keymaps(test_config)
-  helpers.assert_true(#set_keymaps > 0, "Should have set keymaps")
+  helpers.assert_true(vim.tbl_count(set_keymaps) > 0, "Should have set keymaps")
   
   -- Then clean them up
   local success, errors = keymaps.cleanup_keymaps()
   
   helpers.assert_true(success, "Should succeed cleaning up")
   helpers.assert_eq(#errors, 0, "Should have no cleanup errors")
-  helpers.assert_true(#deleted_keymaps > 0, "Should have deleted keymaps")
+  helpers.assert_true(vim.tbl_count(deleted_keymaps) > 0, "Should have deleted keymaps")
 end
 
 -- Test: keymap validation

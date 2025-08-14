@@ -366,6 +366,29 @@ local current_memory = {
 	variable = nil,
 }
 
+---Parse memory address string to number
+---
+---Converts various address formats to numeric values for memory operations.
+---Supports hexadecimal (0x1234), decimal (1234), and direct numeric inputs.
+---
+---@param addr_str string|number Address string or number
+---@return number|nil Parsed address as number
+local function parse_address(addr_str)
+	if type(addr_str) == "number" then
+		return addr_str
+	end
+
+	if type(addr_str) == "string" then
+		if addr_str:match("^0x") then
+			local hex = addr_str:match("^0x(%x+)")
+			return hex and tonumber(hex, 16) or nil
+		end
+		return tonumber(addr_str)
+	end
+	
+	return nil
+end
+
 ---View memory at cursor position
 ---
 ---Displays memory contents for the variable or address under the cursor in a
@@ -646,21 +669,7 @@ function M.show_memory(address, size)
 	end, { timeout = 5000, max_lines = 100 })
 end
 
--- Helper to parse address strings
----@param addr_str string|number Address string or number
----@return number|nil Parsed address as number
-local function parse_address(addr_str)
-	if type(addr_str) == "number" then
-		return addr_str
-	end
-
-	if addr_str:match("^0x") then
-		local hex = addr_str:match("^0x(%x+)")
-		return hex and tonumber(hex, 16) or nil
-	end
-
-	return tonumber(addr_str)
-end
+-- Note: parse_address function already defined above at line 376
 
 ---Navigate memory view by offset
 ---

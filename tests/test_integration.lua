@@ -1,6 +1,14 @@
 ---Integration tests for termdebug-enhanced module interactions
 ---Run with: nvim -l tests/test_integration.lua
 
+-- IMPORTANT: Clear any previously loaded modules to ensure mocks are used
+package.loaded["termdebug-enhanced.utils"] = nil
+package.loaded["termdebug-enhanced.keymaps"] = nil
+package.loaded["termdebug-enhanced.evaluate"] = nil
+package.loaded["termdebug-enhanced.memory"] = nil
+package.loaded["termdebug-enhanced.init"] = nil
+package.loaded["termdebug-enhanced"] = nil
+
 -- Load test helpers
 local helpers = require("tests.test_helpers")
 
@@ -77,22 +85,41 @@ local function create_mock_utils()
     debounce = function(func, delay)
       return func -- Return function directly for testing
     end,
+    
+    -- Add missing mock functions that are used by modules
+    track_resource = function() end,
+    untrack_resource = function() end,
+    cleanup_all_resources = function() return 0 end,
+    get_resource_stats = function() return {} end,
+    get_performance_metrics = function() return { avg_response_time = 0 } end,
   }
 end
 
--- Set up mock environment
+-- Set up mock environment BEFORE any module loading
 package.loaded["termdebug-enhanced.utils"] = create_mock_utils()
 
 -- Mock main module config
 package.loaded["termdebug-enhanced"] = {
   config = {
     popup = { border = "rounded", width = 60, height = 10 },
-    memory_viewer = { width = 80, height = 20, format = "hex", bytes_per_line = 16 }
+    memory_viewer = { width = 80, height = 20, format = "hex", bytes_per_line = 16 },
+    keymaps = {
+      continue = "<F5>",
+      step_over = "<F10>",
+      step_into = "<F11>",
+      step_out = "<S-F11>",
+      toggle_breakpoint = "<F9>",
+      evaluate = "K",
+    }
   }
 }
 
 -- Mock vim globals and functions
 vim.g.termdebug_running = true
+vim.fn.exists = function(cmd)
+  if cmd == ":Termdebug" then return 1 end
+  return 0
+end
 
 local mock_keymaps = {}
 local mock_windows = {}
@@ -191,9 +218,10 @@ local memory = require("termdebug-enhanced.memory")
 
 -- Test: Full plugin lifecycle (setup -> use -> cleanup)
 function tests.test_plugin_lifecycle()
-  gdb_calls = {}
-  mock_keymaps = {}
-  notifications = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(mock_keymaps) do mock_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   -- Test plugin setup
   local config = {
@@ -229,8 +257,9 @@ end
 
 -- Test: Evaluate module integration with utils
 function tests.test_evaluate_utils_integration()
-  gdb_calls = {}
-  mock_buffers = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(mock_buffers) do mock_buffers[k] = nil end
   
   -- Set up specific GDB response for evaluation
   gdb_responses["print test_var"] = {
@@ -249,8 +278,9 @@ end
 
 -- Test: Memory module integration with utils
 function tests.test_memory_utils_integration()
-  gdb_calls = {}
-  mock_buffers = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(mock_buffers) do mock_buffers[k] = nil end
   
   -- Set up GDB responses for memory operations
   gdb_responses["print &test_var"] = {
@@ -274,8 +304,9 @@ end
 
 -- Test: Keymaps integration with evaluate module
 function tests.test_keymaps_evaluate_integration()
-  gdb_calls = {}
-  mock_keymaps = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(mock_keymaps) do mock_keymaps[k] = nil end
   
   -- Set up keymaps
   keymaps.setup_keymaps({ evaluate = "K", evaluate_visual = "K" })
@@ -296,7 +327,8 @@ function tests.test_keymaps_evaluate_integration()
   helpers.assert_true(#gdb_calls > 0, "Should make GDB call through evaluate module")
   
   -- Test visual mode evaluation
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   local visual_callback = mock_keymaps["v:K"].callback
   helpers.assert_not_nil(visual_callback, "Should have visual evaluate callback")
   
@@ -308,8 +340,9 @@ end
 
 -- Test: Keymaps integration with memory module
 function tests.test_keymaps_memory_integration()
-  gdb_calls = {}
-  mock_keymaps = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(mock_keymaps) do mock_keymaps[k] = nil end
   
   -- Set up keymaps
   keymaps.setup_keymaps({ 
@@ -338,7 +371,8 @@ function tests.test_keymaps_memory_integration()
   helpers.assert_true(#gdb_calls >= 2, "Should make GDB calls through memory module")
   
   -- Test memory edit
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   gdb_responses["set variable test_var = test_input"] = {
     success = true,
     data = {}
@@ -355,8 +389,9 @@ end
 
 -- Test: Error handling across modules
 function tests.test_cross_module_error_handling()
-  gdb_calls = {}
-  notifications = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   -- Set up error responses
   gdb_responses["print invalid_var"] = {
@@ -376,7 +411,8 @@ function tests.test_cross_module_error_handling()
   helpers.assert_true(#gdb_calls > 0, "Should attempt GDB call")
   
   -- Test memory error handling
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   vim.fn.expand = function(expr)
     if expr == "<cexpr>" or expr == "<cword>" then return "invalid_var" end
     return ""
@@ -390,7 +426,7 @@ end
 
 -- Test: Configuration loading and validation
 function tests.test_configuration_validation()
-  notifications = {}
+  for k in pairs(notifications) do notifications[k] = nil end
   
   -- Test with invalid configuration
   local invalid_config = {
@@ -409,8 +445,8 @@ end
 
 -- Test: Resource cleanup across modules
 function tests.test_resource_cleanup()
-  mock_buffers = {}
-  mock_windows = {}
+  for k in pairs(mock_buffers) do mock_buffers[k] = nil end
+  for k in pairs(mock_windows) do mock_windows[k] = nil end
   
   -- Create resources through different modules
   evaluate.evaluate_custom("test_var")
@@ -431,7 +467,8 @@ end
 
 -- Test: Async operation coordination
 function tests.test_async_operation_coordination()
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   
   -- Set up responses with delays to test async coordination
   gdb_responses["info breakpoints"] = {
@@ -460,7 +497,8 @@ end
 
 -- Test: Module state consistency
 function tests.test_module_state_consistency()
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   
   -- Test that modules maintain consistent state
   local config = {
@@ -485,7 +523,7 @@ end
 
 -- Test: GDB availability checking across modules
 function tests.test_gdb_availability_checking()
-  notifications = {}
+  for k in pairs(notifications) do notifications[k] = nil end
   
   -- Test with GDB not running
   vim.g.termdebug_running = false
@@ -510,12 +548,13 @@ end
 -- Cleanup function
 local function cleanup_tests()
   -- Clear all mock state
-  gdb_calls = {}
+  -- Clear gdb_calls table
+  for k in pairs(gdb_calls) do gdb_calls[k] = nil end
   gdb_responses = {}
-  mock_keymaps = {}
-  mock_buffers = {}
-  mock_windows = {}
-  notifications = {}
+  for k in pairs(mock_keymaps) do mock_keymaps[k] = nil end
+  for k in pairs(mock_buffers) do mock_buffers[k] = nil end
+  for k in pairs(mock_windows) do mock_windows[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   -- Reset vim globals
   vim.g.termdebug_running = true

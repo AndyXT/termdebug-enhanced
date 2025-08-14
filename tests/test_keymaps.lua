@@ -1,6 +1,13 @@
 ---Unit tests for termdebug-enhanced.keymaps module
 ---Run with: nvim -l tests/test_keymaps.lua
 
+-- IMPORTANT: Clear any previously loaded modules to ensure mocks are used
+package.loaded["termdebug-enhanced.utils"] = nil
+package.loaded["termdebug-enhanced.keymaps"] = nil
+package.loaded["termdebug-enhanced.evaluate"] = nil
+package.loaded["termdebug-enhanced.memory"] = nil
+package.loaded["termdebug-enhanced"] = nil
+
 -- Load test helpers
 local helpers = require("tests.test_helpers")
 
@@ -10,31 +17,29 @@ package.loaded["termdebug-enhanced.utils"] = {
   async_gdb_response = function(cmd, callback, opts)
     table.insert(mock_utils_calls, { command = cmd, opts = opts })
     
-    -- Mock responses based on command patterns
-    vim.defer_fn(function()
-      if cmd:match("^info breakpoints") then
-        -- Return breakpoint list or empty
-        if cmd:match("empty") then
-          callback(nil, "No breakpoints or watchpoints.")
-        else
-          callback(helpers.fixtures.breakpoints_multiple, nil)
-        end
-      elseif cmd:match("^break ") then
-        -- Breakpoint setting
-        callback({}, nil)
-      elseif cmd:match("^delete ") then
-        -- Breakpoint deletion
-        callback({}, nil)
-      elseif cmd:match("^display ") then
-        -- Watch expression
-        callback({}, nil)
-      elseif cmd:match("^set variable ") then
-        -- Variable setting
-        callback({}, nil)
+    -- Execute callback immediately for testing (no async delay)
+    if cmd:match("^info breakpoints") then
+      -- Return breakpoint list or empty
+      if cmd:match("empty") then
+        callback(nil, "No breakpoints or watchpoints.")
       else
-        callback(nil, "Unknown command")
+        callback(helpers.fixtures.breakpoints_multiple, nil)
       end
-    end, 10)
+    elseif cmd:match("^break ") then
+      -- Breakpoint setting
+      callback({}, nil)
+    elseif cmd:match("^delete ") then
+      -- Breakpoint deletion
+      callback({}, nil)
+    elseif cmd:match("^display ") then
+      -- Watch expression
+      callback({}, nil)
+    elseif cmd:match("^set variable ") then
+      -- Variable setting
+      callback({}, nil)
+    else
+      callback(nil, "Unknown command")
+    end
   end,
   
   parse_breakpoints = function(lines)
@@ -54,6 +59,13 @@ package.loaded["termdebug-enhanced.utils"] = {
     end
     return nil
   end,
+  
+  -- Add missing mock functions that modules might use
+  track_resource = function() end,
+  untrack_resource = function() end,
+  cleanup_all_resources = function() return 0 end,
+  get_resource_stats = function() return {} end,
+  get_performance_metrics = function() return { avg_response_time = 0 } end,
 }
 
 -- Mock the evaluate module
@@ -82,6 +94,10 @@ package.loaded["termdebug-enhanced.memory"] = {
 
 -- Mock vim globals for GDB state
 vim.g.termdebug_running = true
+vim.fn.exists = function(cmd)
+  if cmd == ":Termdebug" then return 1 end
+  return 0
+end
 
 local keymaps = require("termdebug-enhanced.keymaps")
 
@@ -165,8 +181,9 @@ local test_keymap_config = {
 
 -- Test: setup_keymaps with valid configuration
 function tests.test_setup_keymaps_valid_config()
-  set_keymaps = {}
-  notifications = {}
+  -- Clear the module-level tables (not create new local ones)
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.setup_keymaps(test_keymap_config)
   
@@ -193,8 +210,9 @@ function tests.test_setup_keymaps_invalid_format()
     step_into = "   ", -- whitespace only
   })
   
-  set_keymaps = {}
-  notifications = {}
+  -- Clear the module-level tables (not create new local ones)
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.setup_keymaps(invalid_config)
   
@@ -208,8 +226,9 @@ end
 -- Test: setup_keymaps with GDB not running
 function tests.test_setup_keymaps_gdb_not_running()
   vim.g.termdebug_running = false
-  set_keymaps = {}
-  notifications = {}
+  -- Clear the module-level tables (not create new local ones)
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.setup_keymaps(test_keymap_config)
   
@@ -232,8 +251,9 @@ function tests.test_setup_keymaps_termdebug_not_available()
     return original_exists(cmd)
   end
   
-  set_keymaps = {}
-  notifications = {}
+  -- Clear the module-level tables (not create new local ones)
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.setup_keymaps(test_keymap_config)
   
@@ -248,9 +268,10 @@ end
 -- Test: cleanup_keymaps with active keymaps
 function tests.test_cleanup_keymaps_with_active()
   -- First set up keymaps
-  set_keymaps = {}
-  deleted_keymaps = {}
-  notifications = {}
+  -- Clear the module-level tables (not create new local ones)
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(deleted_keymaps) do deleted_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   keymaps.setup_keymaps(test_keymap_config)
   
@@ -270,8 +291,8 @@ function tests.test_cleanup_keymaps_no_active()
   package.loaded["termdebug-enhanced.keymaps"] = nil
   keymaps = require("termdebug-enhanced.keymaps")
   
-  deleted_keymaps = {}
-  notifications = {}
+  for k in pairs(deleted_keymaps) do deleted_keymaps[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   
   local success, errors = keymaps.cleanup_keymaps()
   
@@ -282,9 +303,9 @@ end
 
 -- Test: breakpoint toggle functionality
 function tests.test_breakpoint_toggle_functionality()
-  set_keymaps = {}
-  mock_utils_calls = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   mock_line_value = 42
   mock_file_value = "/test/main.c"
   
@@ -297,18 +318,16 @@ function tests.test_breakpoint_toggle_functionality()
   -- Execute the callback
   toggle_callback()
   
-  -- Wait for async operations
-  helpers.wait_for(function() return #mock_utils_calls >= 1 end, 1000)
-  
+  -- Since we're executing synchronously now, no need to wait
   helpers.assert_true(#mock_utils_calls >= 1, "Should make GDB call for breakpoint info")
   helpers.assert_true(mock_utils_calls[1].command:match("info breakpoints"), "Should query breakpoint info")
 end
 
 -- Test: breakpoint toggle with no file open
 function tests.test_breakpoint_toggle_no_file()
-  set_keymaps = {}
-  mock_utils_calls = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   mock_file_value = ""
   
   keymaps.setup_keymaps({ toggle_breakpoint = "<F9>" })
@@ -324,9 +343,9 @@ end
 -- Test: breakpoint toggle with GDB not running
 function tests.test_breakpoint_toggle_gdb_not_running()
   vim.g.termdebug_running = false
-  set_keymaps = {}
-  mock_utils_calls = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   mock_file_value = "/test/main.c"
   
   keymaps.setup_keymaps({ toggle_breakpoint = "<F9>" })
@@ -343,7 +362,7 @@ end
 
 -- Test: evaluate keymap functionality
 function tests.test_evaluate_keymap_functionality()
-  set_keymaps = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   mock_evaluate_calls = {}
   
   keymaps.setup_keymaps({ evaluate = "K" })
@@ -359,7 +378,7 @@ end
 
 -- Test: evaluate visual keymap functionality
 function tests.test_evaluate_visual_keymap_functionality()
-  set_keymaps = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   mock_evaluate_calls = {}
   
   keymaps.setup_keymaps({ evaluate_visual = "K" })
@@ -375,7 +394,7 @@ end
 
 -- Test: memory view keymap functionality
 function tests.test_memory_view_keymap_functionality()
-  set_keymaps = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   mock_memory_calls = {}
   
   keymaps.setup_keymaps({ memory_view = "<leader>dm" })
@@ -391,7 +410,7 @@ end
 
 -- Test: memory edit keymap functionality
 function tests.test_memory_edit_keymap_functionality()
-  set_keymaps = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   mock_memory_calls = {}
   
   keymaps.setup_keymaps({ memory_edit = "<leader>de" })
@@ -407,8 +426,8 @@ end
 
 -- Test: watch add keymap functionality
 function tests.test_watch_add_keymap_functionality()
-  set_keymaps = {}
-  mock_utils_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_input_value = "test_expr"
   
   keymaps.setup_keymaps({ watch_add = "<leader>dw" })
@@ -418,17 +437,15 @@ function tests.test_watch_add_keymap_functionality()
   
   watch_callback()
   
-  -- Wait for async operations
-  helpers.wait_for(function() return #mock_utils_calls >= 1 end, 1000)
-  
+  -- Since we're executing synchronously now, no need to wait
   helpers.assert_true(#mock_utils_calls >= 1, "Should make GDB call for watch")
   helpers.assert_true(mock_utils_calls[1].command:match("display test_expr"), "Should add watch expression")
 end
 
 -- Test: watch add with empty input
 function tests.test_watch_add_empty_input()
-  set_keymaps = {}
-  mock_utils_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_input_value = ""
   
   keymaps.setup_keymaps({ watch_add = "<leader>dw" })
@@ -442,8 +459,8 @@ end
 
 -- Test: variable set keymap functionality
 function tests.test_variable_set_keymap_functionality()
-  set_keymaps = {}
-  mock_utils_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_cword_value = "test_var"
   mock_input_value = "100"
   
@@ -454,18 +471,16 @@ function tests.test_variable_set_keymap_functionality()
   
   var_callback()
   
-  -- Wait for async operations
-  helpers.wait_for(function() return #mock_utils_calls >= 1 end, 1000)
-  
+  -- Since we're executing synchronously now, no need to wait
   helpers.assert_true(#mock_utils_calls >= 1, "Should make GDB call for variable set")
   helpers.assert_true(mock_utils_calls[1].command:match("set variable test_var = 100"), "Should set variable correctly")
 end
 
 -- Test: variable set with no word under cursor
 function tests.test_variable_set_no_word()
-  set_keymaps = {}
-  mock_utils_calls = {}
-  notifications = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
+  for k in pairs(notifications) do notifications[k] = nil end
   mock_cword_value = ""
   
   keymaps.setup_keymaps({ variable_set = "<leader>ds" })
@@ -479,8 +494,8 @@ end
 
 -- Test: variable set with empty value
 function tests.test_variable_set_empty_value()
-  set_keymaps = {}
-  mock_utils_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_cword_value = "test_var"
   mock_input_value = ""
   
@@ -494,8 +509,8 @@ end
 
 -- Test: restart keymap functionality
 function tests.test_restart_keymap_functionality()
-  set_keymaps = {}
-  cmd_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   
   keymaps.setup_keymaps({ restart = "<C-S-F5>" })
   
@@ -515,8 +530,8 @@ end
 
 -- Test: standard debugging keymaps functionality
 function tests.test_standard_debugging_keymaps()
-  set_keymaps = {}
-  cmd_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   
   keymaps.setup_keymaps({
     continue = "<F5>",
@@ -531,22 +546,22 @@ function tests.test_standard_debugging_keymaps()
   continue_callback()
   helpers.assert_contains(table.concat(cmd_calls, " "), "Continue", "Should call Continue command")
   
-  cmd_calls = {}
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   local step_over_callback = set_keymaps["n:<F10>"].callback
   step_over_callback()
   helpers.assert_contains(table.concat(cmd_calls, " "), "Over", "Should call Over command")
   
-  cmd_calls = {}
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   local step_into_callback = set_keymaps["n:<F11>"].callback
   step_into_callback()
   helpers.assert_contains(table.concat(cmd_calls, " "), "Step", "Should call Step command")
   
-  cmd_calls = {}
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   local step_out_callback = set_keymaps["n:<S-F11>"].callback
   step_out_callback()
   helpers.assert_contains(table.concat(cmd_calls, " "), "Finish", "Should call Finish command")
   
-  cmd_calls = {}
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
   local stop_callback = set_keymaps["n:<S-F5>"].callback
   stop_callback()
   helpers.assert_contains(table.concat(cmd_calls, " "), "Stop", "Should call Stop command")
@@ -561,13 +576,13 @@ local function cleanup_tests()
   vim.notify = original_notify
   
   -- Clear mock state
-  set_keymaps = {}
-  deleted_keymaps = {}
-  mock_utils_calls = {}
+  for k in pairs(set_keymaps) do set_keymaps[k] = nil end
+  for k in pairs(deleted_keymaps) do deleted_keymaps[k] = nil end
+  for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_evaluate_calls = {}
   mock_memory_calls = {}
-  notifications = {}
-  cmd_calls = {}
+  for k in pairs(notifications) do notifications[k] = nil end
+  for k in pairs(cmd_calls) do cmd_calls[k] = nil end
 end
 
 -- Run tests with cleanup

@@ -659,7 +659,7 @@ function M.edit_memory_at_cursor()
         
         for i, byte in ipairs(byte_list) do
           local addr = string.format("(char*)(%s)+%d", word, i-1)
-          utils.async_gdb_response(string.format("set *%s = %s", addr, byte), function(response, error)
+          utils.async_gdb_response(string.format("set *%s = %s", addr, byte), function(_, error)
             completed_operations = completed_operations + 1
             
             if error then
@@ -692,7 +692,7 @@ function M.edit_memory_at_cursor()
     end
     
     if value ~= "" then
-      utils.async_gdb_response("set variable " .. word .. " = " .. value, function(response, error)
+      utils.async_gdb_response("set variable " .. word .. " = " .. value, function(_, error)
         if error then
           vim.notify("Failed to set variable: " .. error, vim.log.levels.ERROR)
         else
@@ -768,7 +768,7 @@ function M.edit_memory_interactive()
     end
     
     local addr = string.format("(char*)(%s)+%s", current_memory.address, offset)
-    utils.async_gdb_response(string.format("set *%s = 0x%s", addr, value), function(response, error)
+    utils.async_gdb_response(string.format("set *%s = 0x%s", addr, value), function(_, error)
       if error then
         vim.notify("Failed to update memory at offset " .. offset .. ": " .. error, vim.log.levels.ERROR)
       else

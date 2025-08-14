@@ -231,7 +231,7 @@ function M.setup_keymaps(keymaps)
 
             if bp_num then
               -- Breakpoint exists, remove it
-              utils.async_gdb_response("delete " .. bp_num, function(del_response, del_error)
+              utils.async_gdb_response("delete " .. bp_num, function(_, del_error)
                 if del_error then
                   vim.notify("Failed to remove breakpoint: " .. del_error, vim.log.levels.ERROR)
                 else
@@ -240,7 +240,7 @@ function M.setup_keymaps(keymaps)
               end)
             else
               -- No breakpoint here, add one
-              utils.async_gdb_response("break " .. file .. ":" .. line, function(add_response, add_error)
+              utils.async_gdb_response("break " .. file .. ":" .. line, function(_, add_error)
                 if add_error then
                   vim.notify("Failed to set breakpoint: " .. add_error, vim.log.levels.ERROR)
                 else
@@ -250,7 +250,7 @@ function M.setup_keymaps(keymaps)
             end
           else
             -- Empty response, try to add breakpoint
-            utils.async_gdb_response("break " .. file .. ":" .. line, function(add_response, add_error)
+            utils.async_gdb_response("break " .. file .. ":" .. line, function(_, add_error)
               if add_error then
                 vim.notify("Failed to set breakpoint: " .. add_error, vim.log.levels.ERROR)
               else
@@ -341,7 +341,7 @@ function M.setup_keymaps(keymaps)
         end
         
         if expr ~= "" then
-          utils.async_gdb_response("display " .. expr, function(response, error)
+          utils.async_gdb_response("display " .. expr, function(_, error)
             if error then
               vim.notify("Failed to add watch: " .. error, vim.log.levels.ERROR)
             else
@@ -437,7 +437,7 @@ function M.setup_keymaps(keymaps)
         end
         
         if value ~= "" then
-          utils.async_gdb_response("set variable " .. var .. " = " .. value, function(response, error)
+          utils.async_gdb_response("set variable " .. var .. " = " .. value, function(_, error)
             if error then
               vim.notify("Failed to set variable: " .. error, vim.log.levels.ERROR)
             else

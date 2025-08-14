@@ -31,8 +31,16 @@ local memory_buf = nil
 ---@return table Memory viewer configuration with width, height, format, and bytes_per_line
 local function get_config()
   local ok, main = pcall(require, "termdebug-enhanced")
-  if ok and main and type(main) == "table" and main.config and main.config.memory_viewer then
-    return main.config.memory_viewer
+  if ok and main and type(main) == "table" and main.config and type(main.config) == "table" then
+    -- Check if memory_viewer config exists, otherwise use defaults
+    if main.config.memory_viewer and type(main.config.memory_viewer) == "table" then
+      return vim.tbl_deep_extend("force", {
+        width = 80,
+        height = 20,
+        format = "hex",
+        bytes_per_line = 16,
+      }, main.config.memory_viewer)
+    end
   end
   -- Return default config if not initialized
   return {
@@ -152,7 +160,8 @@ local function create_memory_error_content(error_info)
 		table.insert(content, "")
 	end
 
-	table.insert(content, "Error: " .. error_info.message)
+	local message = error_info.message or "Unknown memory error"
+	table.insert(content, "Error: " .. message)
 
 	-- Add helpful hints based on error type
 	if error_info.type == "invalid_address" then
@@ -214,16 +223,16 @@ local function create_memory_window(content, opts, is_error)
 	memory_buf = buf
 
 	-- Track buffer for cleanup (with safe loading)
-	local track_ok = pcall(function()
+	local track_buf_ok = pcall(function()
 		utils.track_resource("mem_buf_" .. tostring(buf), "buffer", buf, function(b)
 			if vim.api.nvim_buf_is_valid(b) then
 				vim.api.nvim_buf_delete(b, { force = true })
 			end
 		end)
 	end)
-	if not track_ok then
-		-- Fallback: track manually if utils not ready
-		-- This will be cleaned up by the cleanup_memory_window function
+	if not track_buf_ok then
+		-- Fallback: manual cleanup will be handled by cleanup_memory_window function
+		vim.notify("Resource tracking unavailable for memory buffer", vim.log.levels.DEBUG)
 	end
 
 	local content_ok, content_err = pcall(vim.api.nvim_buf_set_lines, memory_buf, 0, -1, false, content or {})
@@ -247,16 +256,16 @@ local function create_memory_window(content, opts, is_error)
 	memory_win = vim.api.nvim_get_current_win()
 
 	-- Track window for cleanup (with safe loading)
-	local track_ok = pcall(function()
+	local track_win_ok = pcall(function()
 		utils.track_resource("mem_win_" .. tostring(memory_win), "window", memory_win, function(w)
 			if vim.api.nvim_win_is_valid(w) then
 				vim.api.nvim_win_close(w, true)
 			end
 		end)
 	end)
-	if not track_ok then
-		-- Fallback: track manually if utils not ready
-		-- This will be cleaned up by the cleanup_memory_window function
+	if not track_win_ok then
+		-- Fallback: manual cleanup will be handled by cleanup_memory_window function
+		vim.notify("Resource tracking unavailable for memory window", vim.log.levels.DEBUG)
 	end
 
 	local set_buf_ok, set_buf_err = pcall(vim.api.nvim_win_set_buf, memory_win, memory_buf)
@@ -574,16 +583,56 @@ function M.show_memory(address, size)
 				return
 			end
 
-			-- Add header
+			-- Enhanced header with more information
 			local formatted = {
-				string.format("✓ Memory at %s (%d bytes):", address, size),
+				string.format("✓ Memory at %s (%d bytes, %s format):", address, size, format),
 				string.rep("─", 70),
 			}
 
-			-- Add memory lines
+			-- Enhanced memory line formatting with address annotations
+			local bytes_per_line = config.bytes_per_line or 16
+			local current_addr = parse_address(address) or 0
+			
 			for _, line in ipairs(response) do
-				table.insert(formatted, line)
+				if line and line ~= "" and not line:match("^%(gdb%)") then
+					-- Try to extract address from GDB output and format consistently
+					local addr_match = line:match("(0x%x+):")
+					if addr_match then
+						-- Format with consistent spacing and add ASCII representation for hex format
+						if format == "hex" then
+							local hex_part = line:match("0x%x+:%s*(.+)")
+							if hex_part then
+								-- Parse hex bytes and create ASCII representation
+								local ascii = ""
+								for hex_byte in hex_part:gmatch("0x(%x%x)") do
+									local byte_val = tonumber(hex_byte, 16)
+									if byte_val and byte_val >= 32 and byte_val <= 126 then
+										ascii = ascii .. string.char(byte_val)
+									else
+										ascii = ascii .. "."
+									end
+								end
+								
+								-- Format line with proper spacing
+								local formatted_line = string.format("%-18s %-48s |%s|", 
+									addr_match .. ":", hex_part, ascii)
+								table.insert(formatted, formatted_line)
+							else
+								table.insert(formatted, line)
+							end
+						else
+							table.insert(formatted, line)
+						end
+					else
+						table.insert(formatted, line)
+					end
+				end
 			end
+
+			-- Add navigation hints
+			table.insert(formatted, "")
+			table.insert(formatted, string.rep("─", 70))
+			table.insert(formatted, "Navigation: +/- (16 bytes) | PgUp/PgDn (256 bytes) | r (refresh) | e (edit)")
 
 			create_memory_window(formatted, config, false)
 		else
@@ -732,43 +781,83 @@ function M.edit_memory_at_cursor()
 		end
 
 		if bytes ~= "" then
-			-- Validate and convert to set commands
+			-- Enhanced validation and conversion to set commands
 			local byte_list = {}
 			local validation_failed = false
+			local byte_count = 0
 
+			-- Count and validate bytes first
 			for byte in bytes:gmatch("%S+") do
+				byte_count = byte_count + 1
 				local hex_valid, hex_error = validate_hex_value(byte)
 				if not hex_valid then
 					vim.notify("Invalid hex value '" .. byte .. "': " .. hex_error, vim.log.levels.ERROR)
 					validation_failed = true
 					break
 				end
-				table.insert(byte_list, "0x" .. byte:gsub("^0x", ""))
+				
+				-- Normalize hex value (ensure 0x prefix)
+				local normalized_byte = byte:gsub("^0x", "")
+				if #normalized_byte > 2 then
+					vim.notify("Hex value '" .. byte .. "' too large (max FF)", vim.log.levels.ERROR)
+					validation_failed = true
+					break
+				end
+				
+				table.insert(byte_list, "0x" .. normalized_byte)
+			end
+
+			-- Check reasonable byte count limit
+			if byte_count > 256 then
+				vim.notify("Too many bytes to edit at once (max 256)", vim.log.levels.ERROR)
+				validation_failed = true
 			end
 
 			if not validation_failed and #byte_list > 0 then
 				local completed_operations = 0
 				local total_operations = #byte_list
 				local has_error = false
+				local error_details = {}
+
+				vim.notify("Writing " .. total_operations .. " bytes to memory...", vim.log.levels.INFO)
 
 				for i, byte in ipairs(byte_list) do
 					local addr = string.format("(char*)(%s)+%d", word, i - 1)
-					utils.async_gdb_response(string.format("set *%s = %s", addr, byte), function(_, error)
+					utils.async_gdb_response(string.format("set *%s = %s", addr, byte), function(set_response, set_error)
 						completed_operations = completed_operations + 1
 
-						if error then
+						if set_error then
 							has_error = true
-							vim.notify(
-								"Failed to set byte at offset " .. (i - 1) .. ": " .. error,
-								vim.log.levels.ERROR
-							)
+							table.insert(error_details, string.format("Offset %d: %s", i - 1, set_error))
+						else
+							-- Check if response indicates success/failure
+							if set_response and #set_response > 0 then
+								local response_text = table.concat(set_response, " ")
+								if response_text:match("[Ee]rror") or response_text:match("[Ff]ailed") then
+									has_error = true
+									table.insert(error_details, string.format("Offset %d: %s", i - 1, response_text))
+								end
+							end
 						end
 
-						-- When all operations complete, refresh if no errors
+						-- When all operations complete, provide comprehensive feedback
 						if completed_operations == total_operations then
 							if not has_error then
-								vim.notify("Memory updated successfully", vim.log.levels.INFO)
+								vim.notify("Successfully wrote " .. total_operations .. " bytes to memory", vim.log.levels.INFO)
 								-- Refresh memory view if active
+								if current_memory.address then
+									vim.defer_fn(function()
+										M.refresh_memory()
+									end, 200)
+								end
+							else
+								local success_count = total_operations - #error_details
+								vim.notify(
+									string.format("Memory write completed with errors (%d/%d successful):\n%s", 
+										success_count, total_operations, table.concat(error_details, "\n")),
+									vim.log.levels.WARN
+								)
+								-- Still refresh to show partial changes
 								if current_memory.address then
 									vim.defer_fn(function()
 										M.refresh_memory()
@@ -776,7 +865,7 @@ function M.edit_memory_at_cursor()
 								end
 							end
 						end
-					end)
+					end, { timeout = 5000 })
 				end
 			end
 		end

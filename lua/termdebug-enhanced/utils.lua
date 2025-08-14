@@ -593,8 +593,9 @@ function M.debounce(func, delay, key)
 
 		-- Clean up existing timer if any
 		if entry and entry.timer then
-			pcall(entry.timer.stop, entry.timer)
-			pcall(entry.timer.close, entry.timer)
+			local timer = entry.timer
+			pcall(timer.stop, timer)
+			pcall(timer.close, timer)
 		end
 
 		-- Create new timer with error handling
@@ -804,6 +805,238 @@ function M.get_resource_stats()
 		stats[entry.type] = (stats[entry.type] or 0) + 1
 	end
 	return stats
+end
+
+---Validation utilities for common input types and GDB commands
+---
+---Provides centralized validation functions that can be used across all modules
+---to ensure consistent input validation and error handling. These utilities
+---help prevent common errors and provide helpful feedback to users.
+---
+---@class ValidationUtils
+M.validation = {}
+
+---Validate and normalize memory address
+---@param address string Address to validate and normalize
+---@return string|nil normalized_address, string|nil error_msg
+function M.validation.normalize_address(address)
+	if not address or address == "" then
+		return nil, "Empty address"
+	end
+
+	local trimmed = vim.trim(address)
+	if trimmed == "" then
+		return nil, "Address contains only whitespace"
+	end
+
+	-- Normalize hex addresses to consistent format
+	if trimmed:match("^0x%x+$") then
+		return trimmed:lower(), nil
+	end
+
+	-- Convert decimal to hex for consistency
+	if trimmed:match("^%d+$") then
+		local num = tonumber(trimmed)
+		if num then
+			return string.format("0x%x", num), nil
+		else
+			return nil, "Invalid decimal address"
+		end
+	end
+
+	-- Variable names are returned as-is
+	if trimmed:match("^[%a_][%w_]*$") then
+		return trimmed, nil
+	end
+
+	return nil, "Invalid address format. Use hex (0x1234), decimal (1234), or variable name"
+end
+
+---Validate GDB command and suggest corrections
+---@param command string GDB command to validate
+---@return boolean valid, string|nil error_msg, string|nil suggestion
+function M.validation.validate_gdb_command_with_suggestions(command)
+	if not command or command == "" then
+		return false, "Empty GDB command", "Try 'help' for available commands"
+	end
+
+	local trimmed = vim.trim(command)
+	if trimmed == "" then
+		return false, "GDB command contains only whitespace", nil
+	end
+
+	-- Check for dangerous commands
+	local dangerous_patterns = {
+		{ pattern = "^%s*quit%s*$", suggestion = "Use :TermdebugStop instead" },
+		{ pattern = "^%s*exit%s*$", suggestion = "Use :TermdebugStop instead" },
+		{ pattern = "^%s*shell%s+", suggestion = "Use :! for shell commands" },
+		{ pattern = "^%s*!%s*", suggestion = "Use :! for shell commands" },
+	}
+
+	for _, check in ipairs(dangerous_patterns) do
+		if trimmed:lower():match(check.pattern) then
+			return false, "Potentially dangerous GDB command blocked: " .. trimmed, check.suggestion
+		end
+	end
+
+	-- Check for common typos and suggest corrections
+	local common_typos = {
+		{ typo = "^print$", suggestion = "Did you mean 'print <variable>'?" },
+		{ typo = "^p$", suggestion = "Did you mean 'p <variable>'?" },
+		{ typo = "^break$", suggestion = "Did you mean 'break <file:line>' or 'break <function>'?" },
+		{ typo = "^b$", suggestion = "Did you mean 'b <file:line>' or 'b <function>'?" },
+		{ typo = "^info$", suggestion = "Did you mean 'info breakpoints', 'info registers', or 'info locals'?" },
+		{ typo = "^set$", suggestion = "Did you mean 'set variable <var> = <value>'?" },
+	}
+
+	for _, check in ipairs(common_typos) do
+		if trimmed:lower():match(check.typo) then
+			return true, nil, check.suggestion
+		end
+	end
+
+	return true, nil, nil
+end
+
+---Validate expression and provide syntax hints
+---@param expression string Expression to validate
+---@return boolean valid, string|nil error_msg, string|nil hint
+function M.validation.validate_expression_with_hints(expression)
+	if not expression or expression == "" then
+		return false, "Empty expression", "Try a variable name like 'var' or expression like 'ptr->field'"
+	end
+
+	local trimmed = vim.trim(expression)
+	if trimmed == "" then
+		return false, "Expression contains only whitespace", nil
+	end
+
+	-- Check for unmatched parentheses
+	local paren_count = 0
+	local bracket_count = 0
+	local brace_count = 0
+
+	for char in trimmed:gmatch(".") do
+		if char == "(" then
+			paren_count = paren_count + 1
+		elseif char == ")" then
+			paren_count = paren_count - 1
+			if paren_count < 0 then
+				return false, "Unmatched closing parenthesis", "Check parentheses balance"
+			end
+		elseif char == "[" then
+			bracket_count = bracket_count + 1
+		elseif char == "]" then
+			bracket_count = bracket_count - 1
+			if bracket_count < 0 then
+				return false, "Unmatched closing bracket", "Check bracket balance"
+			end
+		elseif char == "{" then
+			brace_count = brace_count + 1
+		elseif char == "}" then
+			brace_count = brace_count - 1
+			if brace_count < 0 then
+				return false, "Unmatched closing brace", "Check brace balance"
+			end
+		end
+	end
+
+	if paren_count ~= 0 then
+		return false, "Unmatched opening parenthesis", "Add " .. paren_count .. " closing parenthesis"
+	end
+	if bracket_count ~= 0 then
+		return false, "Unmatched opening bracket", "Add " .. bracket_count .. " closing bracket"
+	end
+	if brace_count ~= 0 then
+		return false, "Unmatched opening brace", "Add " .. brace_count .. " closing brace"
+	end
+
+	-- Provide hints for common expression patterns
+	local hints = {}
+	if trimmed:match("->") then
+		table.insert(hints, "Pointer dereference detected")
+	end
+	if trimmed:match("%[%d+%]") then
+		table.insert(hints, "Array indexing detected")
+	end
+	if trimmed:match("%.") then
+		table.insert(hints, "Structure member access detected")
+	end
+	if trimmed:match("&") then
+		table.insert(hints, "Address-of operator detected")
+	end
+	if trimmed:match("%*") then
+		table.insert(hints, "Dereference operator detected")
+	end
+
+	local hint = #hints > 0 and table.concat(hints, ", ") or nil
+	return true, nil, hint
+end
+
+---Validate hex value with format suggestions
+---@param hex_value string Hex value to validate
+---@return string|nil normalized_value, string|nil error_msg, string|nil suggestion
+function M.validation.normalize_hex_value(hex_value)
+	if not hex_value or hex_value == "" then
+		return nil, "Empty hex value", "Use format like 0xFF or FF"
+	end
+
+	local trimmed = vim.trim(hex_value)
+	if trimmed == "" then
+		return nil, "Hex value contains only whitespace", nil
+	end
+
+	-- Remove 0x prefix if present and normalize
+	local hex_part = trimmed:gsub("^0x", ""):gsub("^0X", "")
+
+	-- Check if it's valid hex
+	if not hex_part:match("^%x+$") then
+		return nil, "Invalid hex format", "Use only hex digits (0-9, A-F)"
+	end
+
+	-- Check reasonable length
+	if #hex_part > 8 then
+		return nil, "Hex value too long (max 8 digits for 32-bit)", "Use shorter value or split into multiple bytes"
+	end
+
+	-- Pad to even length for byte alignment
+	if #hex_part % 2 == 1 then
+		hex_part = "0" .. hex_part
+	end
+
+	return "0x" .. hex_part:upper(), nil, nil
+end
+
+---Comprehensive input validation with detailed feedback
+---@param input_type string Type of input ("address", "expression", "hex", "command")
+---@param value string Value to validate
+---@return table Validation result with valid, error, suggestion, and normalized fields
+function M.validation.validate_input(input_type, value)
+	local result = {
+		valid = false,
+		error = nil,
+		suggestion = nil,
+		normalized = nil,
+		hints = {},
+	}
+
+	if input_type == "address" then
+		result.normalized, result.error = M.validation.normalize_address(value)
+		result.valid = result.normalized ~= nil
+	elseif input_type == "expression" then
+		result.valid, result.error, result.suggestion = M.validation.validate_expression_with_hints(value)
+		result.normalized = result.valid and vim.trim(value) or nil
+	elseif input_type == "hex" then
+		result.normalized, result.error, result.suggestion = M.validation.normalize_hex_value(value)
+		result.valid = result.normalized ~= nil
+	elseif input_type == "command" then
+		result.valid, result.error, result.suggestion = M.validation.validate_gdb_command_with_suggestions(value)
+		result.normalized = result.valid and vim.trim(value) or nil
+	else
+		result.error = "Unknown input type: " .. tostring(input_type)
+	end
+
+	return result
 end
 
 return M

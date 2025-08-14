@@ -525,6 +525,65 @@ function M.setup(opts)
 				vim.notify("Failed to stop termdebug: " .. tostring(stop_err), vim.log.levels.ERROR)
 			end
 		end, { desc = "Stop termdebug" })
+
+		-- Diagnostic command
+		vim.api.nvim_create_user_command("TermdebugDiagnose", function()
+			M.print_diagnostics()
+		end, { desc = "Show termdebug-enhanced diagnostic information" })
+
+		-- Configuration reload command
+		vim.api.nvim_create_user_command("TermdebugReloadConfig", function(args)
+			if args.args ~= "" then
+				-- Try to load config from file
+				local config_file = args.args
+				if vim.fn.filereadable(config_file) == 1 then
+					local load_ok, new_config = pcall(dofile, config_file)
+					if load_ok and type(new_config) == "table" then
+						local success, errors = M.reload_config(new_config)
+						if not success then
+							vim.notify("Config reload failed:\n" .. table.concat(errors, "\n"), vim.log.levels.ERROR)
+						end
+					else
+						vim.notify("Failed to load config file: " .. tostring(new_config), vim.log.levels.ERROR)
+					end
+				else
+					vim.notify("Config file not readable: " .. config_file, vim.log.levels.ERROR)
+				end
+			else
+				-- Reload current config (re-validate)
+				local success, errors = M.reload_config({})
+				if not success then
+					vim.notify("Config validation failed:\n" .. table.concat(errors, "\n"), vim.log.levels.ERROR)
+				end
+			end
+		end, { nargs = "?", desc = "Reload termdebug-enhanced configuration", complete = "file" })
+
+		-- Validation commands for runtime use
+		vim.api.nvim_create_user_command("TermdebugValidateAddress", function(args)
+			if args.args == "" then
+				vim.notify("Usage: TermdebugValidateAddress <address>", vim.log.levels.INFO)
+				return
+			end
+			local valid, error_msg = M.validate.address(args.args)
+			if valid then
+				vim.notify("✓ Address '" .. args.args .. "' is valid", vim.log.levels.INFO)
+			else
+				vim.notify("✗ Address '" .. args.args .. "' is invalid: " .. error_msg, vim.log.levels.ERROR)
+			end
+		end, { nargs = 1, desc = "Validate memory address format" })
+
+		vim.api.nvim_create_user_command("TermdebugValidateExpression", function(args)
+			if args.args == "" then
+				vim.notify("Usage: TermdebugValidateExpression <expression>", vim.log.levels.INFO)
+				return
+			end
+			local valid, error_msg = M.validate.expression(args.args)
+			if valid then
+				vim.notify("✓ Expression '" .. args.args .. "' is valid", vim.log.levels.INFO)
+			else
+				vim.notify("✗ Expression '" .. args.args .. "' is invalid: " .. error_msg, vim.log.levels.ERROR)
+			end
+		end, { nargs = 1, desc = "Validate GDB expression syntax" })
 	end)
 
 	if not cmd_ok then
@@ -587,6 +646,363 @@ function M.cleanup_all_resources()
 	end
 
 	return total_cleaned
+end
+
+---Runtime validation for user inputs (addresses, expressions, memory values)
+---
+---Provides validation functions for common user inputs during debugging sessions.
+---These functions can be used by other modules to validate user input before
+---processing, preventing errors and providing helpful feedback.
+---
+---@class RuntimeValidation
+M.validate = {}
+
+---Validate memory address format
+---@param address string Address to validate
+---@return boolean valid, string|nil error_msg
+function M.validate.address(address)
+	if not address or address == "" then
+		return false, "Empty address"
+	end
+
+	local trimmed = vim.trim(address)
+	if trimmed == "" then
+		return false, "Address contains only whitespace"
+	end
+
+	-- Check for hex address format
+	if trimmed:match("^0x%x+$") then
+		return true, nil
+	end
+
+	-- Check for decimal address
+	if trimmed:match("^%d+$") then
+		return true, nil
+	end
+
+	-- Check for variable name (basic validation)
+	if trimmed:match("^[%a_][%w_]*$") then
+		return true, nil
+	end
+
+	return false, "Invalid address format. Use hex (0x1234), decimal (1234), or variable name"
+end
+
+---Validate expression syntax for GDB evaluation
+---@param expression string Expression to validate
+---@return boolean valid, string|nil error_msg
+function M.validate.expression(expression)
+	if not expression or expression == "" then
+		return false, "Empty expression"
+	end
+
+	local trimmed = vim.trim(expression)
+	if trimmed == "" then
+		return false, "Expression contains only whitespace"
+	end
+
+	-- Check for unmatched parentheses
+	local paren_count = 0
+	for char in trimmed:gmatch(".") do
+		if char == "(" then
+			paren_count = paren_count + 1
+		elseif char == ")" then
+			paren_count = paren_count - 1
+			if paren_count < 0 then
+				return false, "Unmatched closing parenthesis"
+			end
+		end
+	end
+
+	if paren_count ~= 0 then
+		return false, "Unmatched opening parenthesis"
+	end
+
+	return true, nil
+end
+
+---Validate hex value for memory editing
+---@param hex_value string Hex value to validate
+---@return boolean valid, string|nil error_msg
+function M.validate.hex_value(hex_value)
+	if not hex_value or hex_value == "" then
+		return false, "Empty hex value"
+	end
+
+	local trimmed = vim.trim(hex_value)
+	if trimmed == "" then
+		return false, "Hex value contains only whitespace"
+	end
+
+	-- Remove 0x prefix if present
+	local hex_part = trimmed:gsub("^0x", "")
+
+	-- Check if it's valid hex
+	if not hex_part:match("^%x+$") then
+		return false, "Invalid hex format. Use hex digits (0-9, A-F)"
+	end
+
+	-- Check reasonable length (1-8 hex digits for 32-bit values)
+	if #hex_part > 8 then
+		return false, "Hex value too long (max 8 digits for 32-bit)"
+	end
+
+	return true, nil
+end
+
+---Validate GDB command for safety
+---@param command string GDB command to validate
+---@return boolean valid, string|nil error_msg
+function M.validate.gdb_command(command)
+	if not command or command == "" then
+		return false, "Empty GDB command"
+	end
+
+	local trimmed = vim.trim(command)
+	if trimmed == "" then
+		return false, "GDB command contains only whitespace"
+	end
+
+	-- Check for obviously dangerous commands (basic safety)
+	local dangerous_patterns = {
+		"^%s*quit%s*$",
+		"^%s*exit%s*$",
+		"^%s*shell%s+",
+		"^%s*!%s*",
+	}
+
+	for _, pattern in ipairs(dangerous_patterns) do
+		if trimmed:lower():match(pattern) then
+			return false, "Potentially dangerous GDB command blocked: " .. trimmed
+		end
+	end
+
+	return true, nil
+end
+
+---Configuration hot-reloading with proper validation
+---
+---Allows updating the plugin configuration at runtime while maintaining
+---validation and consistency. This function validates the new configuration,
+---applies changes, and updates any active debugging sessions.
+---
+---@param new_config table New configuration to apply
+---@return boolean success, string[] errors Hot-reload result with detailed error information
+function M.reload_config(new_config)
+	local reload_errors = {}
+
+	-- Validate new configuration
+	local validation_result = validate_config(new_config)
+
+	if not validation_result.valid then
+		table.insert(reload_errors, "Configuration validation failed during hot-reload")
+		for _, error in ipairs(validation_result.errors) do
+			table.insert(reload_errors, "  " .. error)
+		end
+		return false, reload_errors
+	end
+
+	-- Store old config for rollback
+	local old_config = vim.deepcopy(M.config)
+
+	-- Apply new configuration with error handling
+	local apply_ok, apply_err = pcall(function()
+		M.config = vim.tbl_deep_extend("force", M.config, new_config)
+	end)
+
+	if not apply_ok then
+		table.insert(reload_errors, "Failed to apply new configuration: " .. tostring(apply_err))
+		return false, reload_errors
+	end
+
+	-- Update termdebug settings
+	local termdebug_ok, termdebug_err = pcall(setup_termdebug)
+	if not termdebug_ok then
+		-- Rollback configuration
+		M.config = old_config
+		table.insert(reload_errors, "Failed to update termdebug settings, rolled back: " .. tostring(termdebug_err))
+		return false, reload_errors
+	end
+
+	-- If debugging is active, update keymaps
+	if vim.g.termdebug_running then
+		local keymaps_ok, keymaps = pcall(require, "termdebug-enhanced.keymaps")
+		if keymaps_ok then
+			-- Clean up old keymaps
+			local cleanup_ok, cleanup_errors = keymaps.cleanup_keymaps()
+			if not cleanup_ok then
+				vim.notify("Warning: Some old keymaps failed to clean up during reload", vim.log.levels.WARN)
+			end
+
+			-- Set up new keymaps
+			local setup_ok, setup_errors = keymaps.setup_keymaps(M.config.keymaps)
+			if not setup_ok then
+				table.insert(reload_errors, "Failed to update keymaps during reload")
+				for _, error in ipairs(setup_errors) do
+					table.insert(reload_errors, "  " .. error)
+				end
+			end
+		end
+	end
+
+	-- Report warnings if any
+	if #validation_result.warnings > 0 then
+		vim.notify("Configuration reload warnings:\n" .. table.concat(validation_result.warnings, "\n"), vim.log.levels.WARN)
+	end
+
+	-- Report results
+	if #reload_errors > 0 then
+		vim.notify("Configuration reload completed with errors:\n" .. table.concat(reload_errors, "\n"), vim.log.levels.WARN)
+		return false, reload_errors
+	else
+		vim.notify("Configuration reloaded successfully", vim.log.levels.INFO)
+		return true, {}
+	end
+end
+
+---Diagnostic commands for troubleshooting plugin setup issues
+---
+---Provides comprehensive diagnostic information about the plugin state,
+---configuration, and environment. This helps users troubleshoot setup
+---issues and verify that everything is working correctly.
+---
+---@return table Diagnostic information
+function M.diagnose()
+	local diagnostics = {
+		plugin_info = {
+			version = "1.0.0", -- TODO: Get from plugin metadata
+			loaded = true,
+		},
+		configuration = {
+			valid = false,
+			errors = {},
+			warnings = {},
+		},
+		environment = {
+			neovim_version = vim.version(),
+			platform = vim.loop.os_uname(),
+			termdebug_available = false,
+			debugger_available = false,
+		},
+		runtime_state = {
+			debugging_active = vim.g.termdebug_running or false,
+			resources = M.get_resource_stats(),
+		},
+	}
+
+	-- Validate current configuration
+	local validation_result = validate_config(M.config)
+	diagnostics.configuration.valid = validation_result.valid
+	diagnostics.configuration.errors = validation_result.errors
+	diagnostics.configuration.warnings = validation_result.warnings
+
+	-- Check termdebug availability
+	local termdebug_available, termdebug_error = check_termdebug_availability()
+	diagnostics.environment.termdebug_available = termdebug_available
+	if not termdebug_available then
+		diagnostics.environment.termdebug_error = termdebug_error
+	end
+
+	-- Check debugger availability
+	local debugger_available, debugger_error = validate_debugger(M.config.debugger)
+	diagnostics.environment.debugger_available = debugger_available
+	if not debugger_available then
+		diagnostics.environment.debugger_error = debugger_error
+	end
+
+	-- Check GDB init file
+	if M.config.gdbinit then
+		local gdbinit_valid, gdbinit_error, gdbinit_warning = validate_gdbinit(M.config.gdbinit)
+		diagnostics.environment.gdbinit_valid = gdbinit_valid
+		if gdbinit_error then
+			diagnostics.environment.gdbinit_error = gdbinit_error
+		end
+		if gdbinit_warning then
+			diagnostics.environment.gdbinit_warning = gdbinit_warning
+		end
+	end
+
+	return diagnostics
+end
+
+---Print formatted diagnostic information
+---@return nil
+function M.print_diagnostics()
+	local diag = M.diagnose()
+
+	print("=== Termdebug Enhanced Diagnostics ===")
+	print()
+
+	-- Plugin info
+	print("Plugin Information:")
+	print("  Version: " .. diag.plugin_info.version)
+	print("  Loaded: " .. tostring(diag.plugin_info.loaded))
+	print()
+
+	-- Configuration
+	print("Configuration:")
+	print("  Valid: " .. tostring(diag.configuration.valid))
+	if #diag.configuration.errors > 0 then
+		print("  Errors:")
+		for _, error in ipairs(diag.configuration.errors) do
+			print("    - " .. error)
+		end
+	end
+	if #diag.configuration.warnings > 0 then
+		print("  Warnings:")
+		for _, warning in ipairs(diag.configuration.warnings) do
+			print("    - " .. warning)
+		end
+	end
+	print()
+
+	-- Environment
+	print("Environment:")
+	print("  Neovim: " .. vim.version().major .. "." .. vim.version().minor .. "." .. vim.version().patch)
+	print("  Platform: " .. diag.environment.platform.sysname .. " " .. diag.environment.platform.machine)
+	print("  Termdebug Available: " .. tostring(diag.environment.termdebug_available))
+	if diag.environment.termdebug_error then
+		print("    Error: " .. diag.environment.termdebug_error)
+	end
+	print("  Debugger Available: " .. tostring(diag.environment.debugger_available))
+	if diag.environment.debugger_error then
+		print("    Error: " .. diag.environment.debugger_error)
+	end
+	if diag.environment.gdbinit_valid ~= nil then
+		print("  GDB Init File Valid: " .. tostring(diag.environment.gdbinit_valid))
+		if diag.environment.gdbinit_error then
+			print("    Error: " .. diag.environment.gdbinit_error)
+		end
+		if diag.environment.gdbinit_warning then
+			print("    Warning: " .. diag.environment.gdbinit_warning)
+		end
+	end
+	print()
+
+	-- Runtime state
+	print("Runtime State:")
+	print("  Debugging Active: " .. tostring(diag.runtime_state.debugging_active))
+	print("  Total Resources: " .. diag.runtime_state.resources.total_resources)
+	if diag.runtime_state.resources.performance.async_operations_count then
+		print("  Async Operations: " .. diag.runtime_state.resources.performance.async_operations_count)
+		print("  Avg Response Time: " .. string.format("%.1fms", diag.runtime_state.resources.performance.avg_response_time))
+	end
+	print()
+
+	-- Recommendations
+	print("Recommendations:")
+	if not diag.configuration.valid then
+		print("  - Fix configuration errors before using the plugin")
+	end
+	if not diag.environment.termdebug_available then
+		print("  - Run ':packadd termdebug' to load the termdebug plugin")
+	end
+	if not diag.environment.debugger_available then
+		print("  - Install the debugger or update the 'debugger' configuration")
+	end
+	if #diag.configuration.warnings > 0 then
+		print("  - Review configuration warnings for potential issues")
+	end
 end
 
 ---Get resource usage statistics

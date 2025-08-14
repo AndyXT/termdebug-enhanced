@@ -175,15 +175,15 @@ function M.setup_keymaps(keymaps)
 	if keymaps.restart then
 		mappings[keymaps.restart] = {
 			cmd = function()
-				local stop_ok, stop_err = pcall(vim.cmd, "Stop")
+				local stop_ok, stop_error = pcall(vim.cmd, "Stop")
 				if not stop_ok then
-					vim.notify("Failed to stop debugging: " .. tostring(stop_err), vim.log.levels.ERROR)
+					vim.notify("Failed to stop debugging: " .. tostring(stop_error), vim.log.levels.ERROR)
 					return
 				end
 				vim.defer_fn(function()
-					local run_ok, run_err = pcall(vim.cmd, "Run")
+					local run_ok, run_error = pcall(vim.cmd, "Run")
 					if not run_ok then
-						vim.notify("Failed to restart debugging: " .. tostring(run_err), vim.log.levels.ERROR)
+						vim.notify("Failed to restart debugging: " .. tostring(run_error), vim.log.levels.ERROR)
 					end
 				end, 100)
 			end,
@@ -261,55 +261,76 @@ function M.setup_keymaps(keymaps)
 					return
 				end
 
-				-- Get current breakpoints
+				-- Enhanced breakpoint toggle with better detection and error handling
 				utils.async_gdb_response("info breakpoints", function(response, error)
 					if error then
-						-- No breakpoints exist or error getting them, just add one
-						utils.async_gdb_response("break " .. file .. ":" .. line, function(_, bp_error)
-							if bp_error then
-								vim.notify("Failed to set breakpoint: " .. bp_error, vim.log.levels.ERROR)
-							else
-								vim.notify("Breakpoint set at line " .. line, vim.log.levels.INFO)
-							end
-						end)
+						-- Check if error indicates no breakpoints exist vs actual error
+						if error:match("[Nn]o breakpoints") or error:match("[Nn]ot found") then
+							-- No breakpoints exist, add one
+							utils.async_gdb_response("break " .. file .. ":" .. line, function(_, set_error)
+								if set_error then
+									vim.notify("Failed to set breakpoint: " .. set_error, vim.log.levels.ERROR)
+								else
+									vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+								end
+							end, { timeout = 3000 })
+						else
+							-- Actual error occurred
+							vim.notify("Failed to check breakpoints: " .. error, vim.log.levels.ERROR)
+						end
 						return
 					end
 
-					-- Parse breakpoints and check if one exists at this location
-					if response and #response > 0 then
-						local breakpoints = utils.parse_breakpoints(response)
-						local bp_num = utils.find_breakpoint(breakpoints, file, line)
+					-- Parse breakpoints with enhanced validation
+					local breakpoints = utils.parse_breakpoints(response)
+					local bp_num = utils.find_breakpoint(breakpoints, file, line)
 
-						if bp_num then
-							-- Breakpoint exists, remove it
-							utils.async_gdb_response("delete " .. bp_num, function(_, del_error)
-								if del_error then
-									vim.notify("Failed to remove breakpoint: " .. del_error, vim.log.levels.ERROR)
-								else
-									vim.notify("Breakpoint " .. bp_num .. " removed", vim.log.levels.INFO)
-								end
-							end)
-						else
-							-- No breakpoint here, add one
-							utils.async_gdb_response("break " .. file .. ":" .. line, function(_, add_error)
-								if add_error then
-									vim.notify("Failed to set breakpoint: " .. add_error, vim.log.levels.ERROR)
-								else
-									vim.notify("Breakpoint set at line " .. line, vim.log.levels.INFO)
-								end
-							end)
-						end
-					else
-						-- Empty response, try to add breakpoint
-						utils.async_gdb_response("break " .. file .. ":" .. line, function(_, add_error)
-							if add_error then
-								vim.notify("Failed to set breakpoint: " .. add_error, vim.log.levels.ERROR)
+					if bp_num then
+						-- Breakpoint exists, remove it with confirmation
+						utils.async_gdb_response("delete " .. bp_num, function(del_response, del_error)
+							if del_error then
+								vim.notify("Failed to remove breakpoint " .. bp_num .. ": " .. del_error, vim.log.levels.ERROR)
 							else
-								vim.notify("Breakpoint set at line " .. line, vim.log.levels.INFO)
+								-- Verify deletion was successful
+								if del_response and #del_response > 0 then
+									local del_text = table.concat(del_response, " ")
+									if del_text:match("[Ee]rror") or del_text:match("[Ff]ailed") then
+										vim.notify("Breakpoint deletion may have failed: " .. del_text, vim.log.levels.WARN)
+									else
+										vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+									end
+								else
+									vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+								end
 							end
-						end)
+						end, { timeout = 3000 })
+					else
+						-- No breakpoint here, add one with validation
+						utils.async_gdb_response("break " .. file .. ":" .. line, function(set_response, set_error)
+							if set_error then
+								vim.notify("Failed to set breakpoint: " .. set_error, vim.log.levels.ERROR)
+							else
+								-- Verify breakpoint was set successfully
+								if set_response and #set_response > 0 then
+									local set_text = table.concat(set_response, " ")
+									if set_text:match("[Ee]rror") or set_text:match("[Ff]ailed") then
+										vim.notify("Breakpoint creation may have failed: " .. set_text, vim.log.levels.WARN)
+									else
+										-- Extract breakpoint number from response if available
+										local new_bp_num = set_text:match("Breakpoint (%d+)")
+										if new_bp_num then
+											vim.notify("Breakpoint " .. new_bp_num .. " set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+										else
+											vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+										end
+									end
+								else
+									vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+								end
+							end
+						end, { timeout = 3000 })
 					end
-				end, { timeout = 2000 })
+				end, { timeout = 3000 })
 			end, { desc = "Toggle breakpoint" })
 
 			if keymap_success then

@@ -1,6 +1,17 @@
 ---Unit tests for termdebug-enhanced.evaluate module
 ---Run with: nvim -l tests/test_evaluate.lua
 
+-- Mock vim globals for GDB availability
+vim.fn = vim.fn or {}
+vim.fn.exists = function(cmd)
+  if cmd == ":Termdebug" then
+    return 1
+  end
+  return 0
+end
+vim.g = vim.g or {}
+vim.g.termdebug_running = true
+
 -- Mock the utils module before requiring evaluate
 package.loaded["termdebug-enhanced.utils"] = {
   async_gdb_response = function(cmd, callback, _opts)
@@ -78,7 +89,7 @@ function tests.test_evaluate_custom()
   -- Check content includes expression and value
   local content = table.concat(popup_content, "\n")
   assert_true(content:match("test_var"), "Should show expression")
-  assert_true(content:match("42"), "Should show value")
+  assert_true(content:match("Value: 42") or content:match("42"), "Should show value")
 
   -- Restore original function
   vim.api.nvim_buf_set_lines = orig_buf_set_lines

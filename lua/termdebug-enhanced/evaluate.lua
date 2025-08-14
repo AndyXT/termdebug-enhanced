@@ -29,7 +29,7 @@ local resource_counter = 0
 ---@return table Configuration object with popup settings
 local function get_config()
   local ok, main = pcall(require, "termdebug-enhanced")
-  if ok and main and type(main) == "table" and main.config then
+  if ok and main and type(main) == "table" and main.config and type(main.config) == "table" then
     return main.config
   end
 	-- Return default config if not initialized
@@ -125,7 +125,8 @@ local function create_error_content(error_info)
 		table.insert(content, "")
 	end
 
-	table.insert(content, "Error: " .. error_info.message)
+	local message = error_info.message or "Unknown error"
+	table.insert(content, "Error: " .. message)
 
 	-- Add helpful hints based on error type
 	if error_info.type == "syntax" then
@@ -193,16 +194,16 @@ local function create_float_window(content, opts, is_error)
 
 	-- Track buffer for cleanup (with safe loading)
 	resource_counter = resource_counter + 1
-	local track_ok = pcall(function()
+	local track_buf_ok = pcall(function()
 		utils.track_resource("eval_buf_" .. tostring(buf), "buffer", buf, function(b)
 			if vim.api.nvim_buf_is_valid(b) then
 				vim.api.nvim_buf_delete(b, { force = true })
 			end
 		end)
 	end)
-	if not track_ok then
-		-- Fallback: track manually if utils not ready
-		-- This will be cleaned up by the cleanup_float_window function
+	if not track_buf_ok then
+		-- Fallback: manual cleanup will be handled by cleanup_float_window function
+		vim.notify("Resource tracking unavailable for evaluation buffer", vim.log.levels.DEBUG)
 	end
 
 	-- Process content into lines
@@ -271,16 +272,16 @@ local function create_float_window(content, opts, is_error)
 	float_win = win
 
 	-- Track window for cleanup (with safe loading)
-	local track_ok = pcall(function()
+	local track_win_ok = pcall(function()
 		utils.track_resource("eval_win_" .. tostring(win), "window", win, function(w)
 			if vim.api.nvim_win_is_valid(w) then
 				vim.api.nvim_win_close(w, true)
 			end
 		end)
 	end)
-	if not track_ok then
-		-- Fallback: track manually if utils not ready
-		-- This will be cleaned up by the cleanup_float_window function
+	if not track_win_ok then
+		-- Fallback: manual cleanup will be handled by cleanup_float_window function
+		vim.notify("Resource tracking unavailable for evaluation window", vim.log.levels.DEBUG)
 	end
 
 	-- Set buffer options (using modern API with error handling)
@@ -428,23 +429,56 @@ function M.evaluate_under_cursor()
 			return
 		end
 
-		-- Format the output nicely
+		-- Enhanced formatting with better value extraction and display
 		local formatted = {}
 		table.insert(formatted, "✓ Expression: " .. word)
-		table.insert(formatted, string.rep("─", 40))
+		table.insert(formatted, string.rep("─", math.max(40, #word + 15)))
 
-		-- Try to extract just the value
 		if response_lines and #response_lines > 0 then
 			local value = utils.extract_value(response_lines)
 			if value then
-				table.insert(formatted, value)
+				-- Format value based on type detection
+				local formatted_value = value
+				
+				-- Detect and format different value types
+				if value:match("^0x%x+$") then
+					-- Hex value - show both hex and decimal
+					local hex_num = tonumber(value:sub(3), 16)
+					if hex_num then
+						formatted_value = string.format("%s (%d)", value, hex_num)
+					end
+				elseif value:match("^%-?%d+$") then
+					-- Integer - show hex representation if > 255
+					local num = tonumber(value)
+					if num and math.abs(num) > 255 then
+						formatted_value = string.format("%s (0x%x)", value, num)
+					end
+				elseif value:match("^{.*}$") then
+					-- Structure - format with proper indentation
+					formatted_value = value:gsub(", ", ",\n  ")
+				end
+				
+				table.insert(formatted, "")
+				table.insert(formatted, "Value: " .. formatted_value)
+				
+				-- Add type information if available from GDB response
+				local full_response = table.concat(response_lines, " ")
+				local type_info = full_response:match("%(([^%)]+)%)")
+				if type_info and not type_info:match("gdb") then
+					table.insert(formatted, "Type:  " .. type_info)
+				end
 			else
+				-- Show raw response if value extraction fails
+				table.insert(formatted, "")
 				for _, line in ipairs(response_lines) do
-					table.insert(formatted, line)
+					if line and line ~= "" and not line:match("^%(gdb%)") then
+						table.insert(formatted, line)
+					end
 				end
 			end
 		else
-			table.insert(formatted, "No output")
+			table.insert(formatted, "")
+			table.insert(formatted, "No output from GDB")
 		end
 
 		-- Show in floating window

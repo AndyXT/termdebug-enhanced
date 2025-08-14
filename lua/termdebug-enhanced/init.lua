@@ -189,7 +189,7 @@ end
 ---@return boolean valid, string[] errors
 local function validate_keymaps(keymaps)
   local errors = {}
-  
+
   if not keymaps then
     return true, {} -- Optional field
   end
@@ -198,17 +198,18 @@ local function validate_keymaps(keymaps)
     table.insert(errors, "Keymaps configuration must be a table")
     return false, errors
   end
-  
+
   -- Check for duplicate keymaps
   local used_keys = {}
   for name, key in pairs(keymaps) do
     if key and key ~= "" then
       if used_keys[key] then
-        table.insert(errors, "Duplicate keymap '" .. key .. "' used for both '" .. used_keys[key] .. "' and '" .. name .. "'")
+        table.insert(errors,
+          "Duplicate keymap '" .. key .. "' used for both '" .. used_keys[key] .. "' and '" .. name .. "'")
       else
         used_keys[key] = name
       end
-      
+
       -- Basic keymap format validation
       if type(key) ~= "string" then
         table.insert(errors, "Keymap '" .. name .. "' must be a string")
@@ -217,7 +218,7 @@ local function validate_keymaps(keymaps)
       end
     end
   end
-  
+
   return #errors == 0, errors
 end
 
@@ -226,31 +227,31 @@ end
 ---@return boolean valid, string[] errors
 local function validate_popup_config(popup)
   local errors = {}
-  
+
   if not popup then
     return true, {} -- Optional field
   end
-  
+
   if type(popup) ~= "table" then
     table.insert(errors, "Popup configuration must be a table")
     return false, errors
   end
-  
+
   -- Validate width
   if popup.width and (type(popup.width) ~= "number" or popup.width <= 0) then
     table.insert(errors, "Popup width must be a positive number")
   end
-  
+
   -- Validate height
   if popup.height and (type(popup.height) ~= "number" or popup.height <= 0) then
     table.insert(errors, "Popup height must be a positive number")
   end
-  
+
   -- Validate border
   if popup.border and type(popup.border) ~= "string" then
     table.insert(errors, "Popup border must be a string")
   end
-  
+
   return #errors == 0, errors
 end
 
@@ -259,26 +260,26 @@ end
 ---@return boolean valid, string[] errors
 local function validate_memory_config(memory_viewer)
   local errors = {}
-  
+
   if not memory_viewer then
     return true, {} -- Optional field
   end
-  
+
   if type(memory_viewer) ~= "table" then
     table.insert(errors, "Memory viewer configuration must be a table")
     return false, errors
   end
-  
+
   -- Validate width
   if memory_viewer.width and (type(memory_viewer.width) ~= "number" or memory_viewer.width <= 0) then
     table.insert(errors, "Memory viewer width must be a positive number")
   end
-  
+
   -- Validate height
   if memory_viewer.height and (type(memory_viewer.height) ~= "number" or memory_viewer.height <= 0) then
     table.insert(errors, "Memory viewer height must be a positive number")
   end
-  
+
   -- Validate format
   if memory_viewer.format then
     local valid_formats = { hex = true, decimal = true, binary = true }
@@ -286,12 +287,12 @@ local function validate_memory_config(memory_viewer)
       table.insert(errors, "Memory viewer format must be 'hex', 'decimal', or 'binary'")
     end
   end
-  
+
   -- Validate bytes_per_line
   if memory_viewer.bytes_per_line and (type(memory_viewer.bytes_per_line) ~= "number" or memory_viewer.bytes_per_line <= 0) then
     table.insert(errors, "Memory viewer bytes_per_line must be a positive number")
   end
-  
+
   return #errors == 0, errors
 end
 
@@ -304,13 +305,13 @@ local function check_termdebug_availability()
     if not pack_ok then
       return false, "Termdebug plugin not available and cannot be loaded: " .. tostring(pack_err)
     end
-    
+
     -- Check again after loading
     if vim.fn.exists(':Termdebug') == 0 then
       return false, "Termdebug plugin loaded but commands not available"
     end
   end
-  
+
   return true, nil
 end
 
@@ -323,26 +324,26 @@ local function validate_config(config)
     errors = {},
     warnings = {}
   }
-  
+
   if not config then
     table.insert(result.errors, "Configuration is nil")
     result.valid = false
     return result
   end
-  
+
   if type(config) ~= "table" then
     table.insert(result.errors, "Configuration must be a table")
     result.valid = false
     return result
   end
-  
+
   -- Validate debugger
   local debugger_valid, debugger_error = validate_debugger(config.debugger)
   if not debugger_valid then
     table.insert(result.errors, debugger_error)
     result.valid = false
   end
-  
+
   -- Validate GDB init file
   local gdbinit_valid, gdbinit_error, gdbinit_warning = validate_gdbinit(config.gdbinit)
   if not gdbinit_valid then
@@ -351,7 +352,7 @@ local function validate_config(config)
   elseif gdbinit_warning then
     table.insert(result.warnings, gdbinit_warning)
   end
-  
+
   -- Validate keymaps
   local keymaps_valid, keymap_errors = validate_keymaps(config.keymaps)
   if not keymaps_valid then
@@ -360,7 +361,7 @@ local function validate_config(config)
     end
     result.valid = false
   end
-  
+
   -- Validate popup configuration
   local popup_valid, popup_errors = validate_popup_config(config.popup)
   if not popup_valid then
@@ -369,7 +370,7 @@ local function validate_config(config)
     end
     result.valid = false
   end
-  
+
   -- Validate memory viewer configuration
   local memory_valid, memory_errors = validate_memory_config(config.memory_viewer)
   if not memory_valid then
@@ -378,13 +379,13 @@ local function validate_config(config)
     end
     result.valid = false
   end
-  
+
   -- Check termdebug availability
   local termdebug_available, termdebug_error = check_termdebug_availability()
   if not termdebug_available then
     table.insert(result.warnings, termdebug_error)
   end
-  
+
   return result
 end
 
@@ -393,12 +394,12 @@ end
 ---@return boolean success, string[] errors Setup result
 function M.setup(opts)
   local setup_errors = {}
-  
+
   -- Merge configuration with error handling
   local merge_ok, merge_err = pcall(function()
     M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   end)
-  
+
   if not merge_ok then
     table.insert(setup_errors, "Failed to merge configuration: " .. tostring(merge_err))
     return false, setup_errors
@@ -406,12 +407,12 @@ function M.setup(opts)
 
   -- Validate configuration
   local validation_result = validate_config(M.config)
-  
+
   -- Report validation results
   if #validation_result.warnings > 0 then
     vim.notify("Configuration warnings:\n" .. table.concat(validation_result.warnings, "\n"), vim.log.levels.WARN)
   end
-  
+
   if not validation_result.valid then
     local error_msg = "Configuration validation failed:\n" .. table.concat(validation_result.errors, "\n")
     vim.notify(error_msg, vim.log.levels.ERROR)
@@ -440,7 +441,7 @@ function M.setup(opts)
         return
       end
 
-      local cmd_parts = {"Termdebug"}
+      local cmd_parts = { "Termdebug" }
 
       -- Add GDB init file if configured and readable
       if M.config.gdbinit and vim.fn.filereadable(M.config.gdbinit) == 1 then
@@ -480,7 +481,7 @@ function M.setup(opts)
       end
     end, { desc = "Stop termdebug" })
   end)
-  
+
   if not cmd_ok then
     table.insert(setup_errors, "Failed to create user commands: " .. tostring(cmd_err))
   end

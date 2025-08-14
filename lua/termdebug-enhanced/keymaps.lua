@@ -180,16 +180,136 @@ function M.setup_keymaps(keymaps)
 	local mappings = {}
 
 	if keymaps.continue and keymaps.continue ~= "" then
-		mappings[keymaps.continue] = { cmd = "Continue", desc = "Continue execution" }
+		mappings[keymaps.continue] = {
+			cmd = function()
+				-- Try multiple methods to execute continue
+				local success = false
+
+				-- Method 1: Try the Continue command
+				local continue_ok, continue_err = pcall(vim.cmd, "Continue")
+				if continue_ok then
+					success = true
+					vim.notify("Continue executed via :Continue command", vim.log.levels.DEBUG)
+				else
+					vim.notify("Continue command failed: " .. tostring(continue_err), vim.log.levels.DEBUG)
+				end
+
+				-- Method 2: If Continue failed, try direct GDB command
+				if not success and vim.fn.exists('*TermDebugSendCommand') == 1 then
+					local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "continue")
+					if send_ok then
+						success = true
+						vim.notify("Continue executed via direct GDB 'continue' command", vim.log.levels.DEBUG)
+					else
+						vim.notify("Direct GDB command failed: " .. tostring(send_err), vim.log.levels.ERROR)
+					end
+				end
+
+				if not success then
+					vim.notify("Failed to execute continue command", vim.log.levels.ERROR)
+				end
+			end,
+			desc = "Continue execution"
+		}
 	end
 	if keymaps.step_over and keymaps.step_over ~= "" then
-		mappings[keymaps.step_over] = { cmd = "Over", desc = "Step over" }
+		mappings[keymaps.step_over] = {
+			cmd = function()
+				-- Try multiple methods to execute step over
+				local success = false
+
+				-- Method 1: Try the Over command
+				local over_ok, over_err = pcall(vim.cmd, "Over")
+				if over_ok then
+					success = true
+					vim.notify("Step over executed via :Over command", vim.log.levels.DEBUG)
+				else
+					vim.notify("Over command failed: " .. tostring(over_err), vim.log.levels.DEBUG)
+				end
+
+				-- Method 2: If Over failed, try direct GDB command
+				if not success and vim.fn.exists('*TermDebugSendCommand') == 1 then
+					local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "next")
+					if send_ok then
+						success = true
+						vim.notify("Step over executed via direct GDB 'next' command", vim.log.levels.DEBUG)
+					else
+						vim.notify("Direct GDB command failed: " .. tostring(send_err), vim.log.levels.ERROR)
+					end
+				end
+
+				if not success then
+					vim.notify("Failed to execute step over command", vim.log.levels.ERROR)
+				end
+			end,
+			desc = "Step over"
+		}
 	end
 	if keymaps.step_into and keymaps.step_into ~= "" then
-		mappings[keymaps.step_into] = { cmd = "Step", desc = "Step into" }
+		mappings[keymaps.step_into] = {
+			cmd = function()
+				-- Try multiple methods to execute step into
+				local success = false
+
+				-- Method 1: Try the Step command
+				local step_ok, step_err = pcall(vim.cmd, "Step")
+				if step_ok then
+					success = true
+					vim.notify("Step into executed via :Step command", vim.log.levels.DEBUG)
+				else
+					vim.notify("Step command failed: " .. tostring(step_err), vim.log.levels.DEBUG)
+				end
+
+				-- Method 2: If Step failed, try direct GDB command
+				if not success and vim.fn.exists('*TermDebugSendCommand') == 1 then
+					local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "step")
+					if send_ok then
+						success = true
+						vim.notify("Step into executed via direct GDB 'step' command", vim.log.levels.DEBUG)
+					else
+						vim.notify("Direct GDB command failed: " .. tostring(send_err), vim.log.levels.ERROR)
+					end
+				end
+
+				if not success then
+					vim.notify("Failed to execute step into command", vim.log.levels.ERROR)
+				end
+			end,
+			desc = "Step into"
+		}
 	end
 	if keymaps.step_out and keymaps.step_out ~= "" then
-		mappings[keymaps.step_out] = { cmd = "Finish", desc = "Step out" }
+		mappings[keymaps.step_out] = {
+			cmd = function()
+				-- Try multiple methods to execute step out
+				local success = false
+
+				-- Method 1: Try the Finish command
+				local finish_ok, finish_err = pcall(vim.cmd, "Finish")
+				if finish_ok then
+					success = true
+					vim.notify("Step out executed via :Finish command", vim.log.levels.DEBUG)
+				else
+					vim.notify("Finish command failed: " .. tostring(finish_err), vim.log.levels.DEBUG)
+				end
+
+				-- Method 2: If Finish failed, try direct GDB command
+				if not success and vim.fn.exists('*TermDebugSendCommand') == 1 then
+					local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "finish")
+					if send_ok then
+						success = true
+						vim.notify("Step out executed via direct GDB 'finish' command", vim.log.levels.DEBUG)
+					else
+						vim.notify("Direct GDB command failed: " .. tostring(send_err), vim.log.levels.ERROR)
+					end
+				end
+
+				if not success then
+					vim.notify("Failed to execute step out command", vim.log.levels.ERROR)
+				end
+			end,
+			desc = "Step out"
+		}
 	end
 	if keymaps.stop and keymaps.stop ~= "" then
 		mappings[keymaps.stop] = { cmd = "Stop", desc = "Stop debugging" }
@@ -286,48 +406,26 @@ function M.setup_keymaps(keymaps)
 				-- Enhanced breakpoint toggle with better detection and error handling
 				utils.async_gdb_response("info breakpoints", function(response, error)
 					if error then
-						-- Check if error indicates no breakpoints exist vs actual error
-						if error:match("[Nn]o breakpoints") or error:match("[Nn]ot found") then
-							-- No breakpoints exist, add one
-							utils.async_gdb_response("break " .. file .. ":" .. line, function(_, set_error)
-								if set_error then
-									vim.notify("Failed to set breakpoint: " .. set_error, vim.log.levels.ERROR)
-								else
-									vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
-								end
-							end, { timeout = 3000 })
-						else
-							-- Actual error occurred
-							vim.notify("Failed to check breakpoints: " .. error, vim.log.levels.ERROR)
-						end
+						-- Actual error occurred
+						vim.notify("Failed to check breakpoints: " .. error, vim.log.levels.ERROR)
 						return
 					end
 
-					-- Parse breakpoints with enhanced validation
-					local breakpoints = utils.parse_breakpoints(response)
-					local bp_num = utils.find_breakpoint(breakpoints, file, line)
-
-					if bp_num then
-						-- Breakpoint exists, remove it with confirmation
-						utils.async_gdb_response("delete " .. bp_num, function(del_response, del_error)
-							if del_error then
-								vim.notify("Failed to remove breakpoint " .. bp_num .. ": " .. del_error, vim.log.levels.ERROR)
-							else
-								-- Verify deletion was successful
-								if del_response and #del_response > 0 then
-									local del_text = table.concat(del_response, " ")
-									if del_text:match("[Ee]rror") or del_text:match("[Ff]ailed") then
-										vim.notify("Breakpoint deletion may have failed: " .. del_text, vim.log.levels.WARN)
-									else
-										vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
-									end
-								else
-									vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
-								end
-							end
-						end, { timeout = 3000 })
+					-- Check if response indicates no breakpoints exist
+					local no_breakpoints = false
+					if response and #response > 0 then
+						local response_text = table.concat(response, " ")
+						if response_text:match("[Nn]o breakpoints") or response_text:match("[Nn]o watchpoints") then
+							no_breakpoints = true
+						end
 					else
-						-- No breakpoint here, add one with validation
+						-- Empty response also means no breakpoints
+						no_breakpoints = true
+					end
+
+					-- If no breakpoints exist at all, or no breakpoint at this line, add one
+					if no_breakpoints then
+						-- No breakpoints exist anywhere, add one
 						utils.async_gdb_response("break " .. file .. ":" .. line, function(set_response, set_error)
 							if set_error then
 								vim.notify("Failed to set breakpoint: " .. set_error, vim.log.levels.ERROR)
@@ -351,6 +449,56 @@ function M.setup_keymaps(keymaps)
 								end
 							end
 						end, { timeout = 3000 })
+					else
+						-- Parse breakpoints and check if one exists at current line
+						local breakpoints = utils.parse_breakpoints(response or {})
+						local bp_num = utils.find_breakpoint(breakpoints, file, line)
+
+						if bp_num then
+							-- Breakpoint exists, remove it with confirmation
+							utils.async_gdb_response("delete " .. bp_num, function(del_response, del_error)
+								if del_error then
+									vim.notify("Failed to remove breakpoint " .. bp_num .. ": " .. del_error, vim.log.levels.ERROR)
+								else
+									-- Verify deletion was successful
+									if del_response and #del_response > 0 then
+										local del_text = table.concat(del_response, " ")
+										if del_text:match("[Ee]rror") or del_text:match("[Ff]ailed") then
+											vim.notify("Breakpoint deletion may have failed: " .. del_text, vim.log.levels.WARN)
+										else
+											vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+										end
+									else
+										vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+									end
+								end
+							end, { timeout = 3000 })
+						else
+							-- No breakpoint at this line, add one
+							utils.async_gdb_response("break " .. file .. ":" .. line, function(set_response, set_error)
+								if set_error then
+									vim.notify("Failed to set breakpoint: " .. set_error, vim.log.levels.ERROR)
+								else
+									-- Verify breakpoint was set successfully
+									if set_response and #set_response > 0 then
+										local set_text = table.concat(set_response, " ")
+										if set_text:match("[Ee]rror") or set_text:match("[Ff]ailed") then
+											vim.notify("Breakpoint creation may have failed: " .. set_text, vim.log.levels.WARN)
+										else
+											-- Extract breakpoint number from response if available
+											local new_bp_num = set_text:match("Breakpoint (%d+)")
+											if new_bp_num then
+												vim.notify("Breakpoint " .. new_bp_num .. " set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+											else
+												vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+											end
+										end
+									else
+										vim.notify("Breakpoint set at " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+									end
+								end
+							end, { timeout = 3000 })
+						end
 					end
 				end, { timeout = 3000 })
 			end, { desc = "Toggle breakpoint" })
@@ -378,7 +526,7 @@ function M.setup_keymaps(keymaps)
 				if not eval_ok then
 					vim.notify("Evaluation failed: " .. tostring(eval_err), vim.log.levels.ERROR)
 				end
-			end, { desc = "Evaluate expression under cursor" })
+			end, { desc = "Evaluate expression under cursor", remap = false })
 
 			if keymap_success then
 				table.insert(active_keymaps, { mode = "n", key = keymaps.evaluate })

@@ -69,7 +69,7 @@ M.config = {
 		stop = "<S-F5>",
 		restart = "<C-S-F5>",
 		evaluate = "K",
-		evaluate_visual = "K",
+		evaluate_visual = "<leader>K",  -- Different key to avoid conflict
 		watch_add = "<leader>dw",
 		watch_remove = "<leader>dW",
 		memory_view = "<leader>dm",
@@ -110,7 +110,15 @@ local function setup_autocmds()
 		group = group,
 		callback = function()
 			vim.g.termdebug_running = true
-			require("termdebug-enhanced.keymaps").setup_keymaps(M.config.keymaps)
+			-- Set up keymaps only when debugging starts
+			local keymaps_ok, keymaps_err = pcall(function()
+				require("termdebug-enhanced.keymaps").setup_keymaps(M.config.keymaps)
+			end)
+			if keymaps_ok then
+				vim.notify("Termdebug Enhanced: Debugging session started, keymaps active", vim.log.levels.INFO)
+			else
+				vim.notify("Termdebug Enhanced: Debugging started but keymap setup failed: " .. tostring(keymaps_err), vim.log.levels.WARN)
+			end
 		end,
 	})
 
@@ -584,6 +592,87 @@ function M.setup(opts)
 				vim.notify("✗ Expression '" .. args.args .. "' is invalid: " .. error_msg, vim.log.levels.ERROR)
 			end
 		end, { nargs = 1, desc = "Validate GDB expression syntax" })
+
+		-- Add missing evaluate commands
+		vim.api.nvim_create_user_command("Evaluate", function(args)
+			if args.args == "" then
+				vim.notify("Usage: Evaluate <expression>", vim.log.levels.INFO)
+				return
+			end
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.evaluate_custom(args.args)
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { nargs = 1, desc = "Evaluate expression and show result" })
+
+		vim.api.nvim_create_user_command("EvaluateCursor", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.evaluate_under_cursor()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Evaluate expression under cursor" })
+
+		vim.api.nvim_create_user_command("TestPopup", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.test_popup()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Test popup window creation" })
+
+		vim.api.nvim_create_user_command("TestGdbResponse", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.test_gdb_response()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Test GDB response mechanism" })
+
+		vim.api.nvim_create_user_command("DiagnoseGdb", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.diagnose_gdb_functions()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Diagnose GDB function availability" })
+
+		vim.api.nvim_create_user_command("TestF10", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.test_f10_keymap()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Test F10 keymap functionality" })
+
+		vim.api.nvim_create_user_command("TestDirectEval", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.test_direct_evaluation()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Test direct evaluation without polling" })
+
+		vim.api.nvim_create_user_command("MemoryView", function(args)
+			local mem_ok, memory = pcall(require, "termdebug-enhanced.memory")
+			if mem_ok then
+				if args.args ~= "" then
+					memory.show_memory(args.args, 256)
+				else
+					memory.view_memory_at_cursor()
+				end
+			else
+				vim.notify("Failed to load memory module: " .. tostring(memory), vim.log.levels.ERROR)
+			end
+		end, { nargs = "?", desc = "View memory at address or cursor" })
 	end)
 
 	if not cmd_ok then

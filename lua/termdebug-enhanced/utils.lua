@@ -242,6 +242,99 @@ function M.reset_performance_metrics()
 	}
 end
 
+---Simple GDB response function for testing
+---@param command string GDB command to execute
+---@param callback fun(response: string[]|nil, error: string|nil): nil Callback function(response, error)
+---@param opts AsyncOptions|nil Options: timeout (ms), poll_interval (ms), max_lines
+---@return nil
+function M.simple_gdb_response(command, callback, opts)
+	opts = opts or {}
+
+	-- Check GDB availability
+	if vim.fn.exists(":Termdebug") == 0 then
+		vim.schedule(function()
+			callback(nil, "Termdebug not available")
+		end)
+		return
+	end
+
+	if not vim.g.termdebug_running then
+		vim.schedule(function()
+			callback(nil, "Debug session not active")
+		end)
+		return
+	end
+
+	vim.notify("Simple GDB response: sending command " .. command, vim.log.levels.INFO)
+
+	-- Try multiple methods to send command
+	local send_ok = false
+	local send_method = "none"
+
+	-- Method 1: Try TermDebugSendCommand (the correct function!)
+	if vim.fn.exists('*TermDebugSendCommand') == 1 then
+		send_method = "TermDebugSendCommand"
+		send_ok = pcall(vim.fn.TermDebugSendCommand, command)
+		vim.notify("Tried TermDebugSendCommand: " .. tostring(send_ok), vim.log.levels.INFO)
+	end
+
+	-- Method 2: Try TermdebugCommand (fallback)
+	if not send_ok and vim.fn.exists('*TermdebugCommand') == 1 then
+		send_method = "TermdebugCommand"
+		send_ok = pcall(vim.fn.TermdebugCommand, command)
+		vim.notify("Tried TermdebugCommand: " .. tostring(send_ok), vim.log.levels.INFO)
+	end
+
+	-- Method 3: Try direct buffer approach
+	if not send_ok then
+		local gdb_buf = M.find_gdb_buffer()
+		if gdb_buf then
+			send_method = "direct_buffer"
+			local buf_lines = vim.api.nvim_buf_get_lines(gdb_buf, -1, -1, false)
+			vim.notify("GDB buffer has " .. #buf_lines .. " lines", vim.log.levels.INFO)
+
+			-- Try to append command to buffer
+			local append_ok = pcall(vim.api.nvim_buf_set_lines, gdb_buf, -1, -1, false, {command})
+			if append_ok then
+				-- Try to send Enter key to execute
+				vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<CR>', true, false, true), 'n', false)
+				send_ok = true
+				vim.notify("Sent command via direct buffer", vim.log.levels.INFO)
+			else
+				vim.notify("Failed to append to GDB buffer", vim.log.levels.ERROR)
+			end
+		else
+			vim.notify("No GDB buffer found", vim.log.levels.ERROR)
+		end
+	end
+
+	-- Method 4: Try using vim.cmd to execute GDB command
+	if not send_ok then
+		send_method = "vim_cmd"
+		local cmd_ok = pcall(vim.cmd, "call TermdebugCommand('" .. command .. "')")
+		if cmd_ok then
+			send_ok = true
+			vim.notify("Sent command via vim.cmd", vim.log.levels.INFO)
+		else
+			vim.notify("Failed to send via vim.cmd", vim.log.levels.ERROR)
+		end
+	end
+
+	vim.notify("Final send result: " .. tostring(send_ok) .. " via " .. send_method, vim.log.levels.INFO)
+
+	if send_ok then
+		-- For now, return a mock response to test if the callback works
+		vim.defer_fn(function()
+			vim.notify("Simple GDB response: calling callback with mock data", vim.log.levels.INFO)
+			callback({"$1 = 42"}, nil)
+		end, 100)
+	else
+		vim.schedule(function()
+			callback(nil, "Failed to send command")
+		end)
+	end
+end
+
 ---Async GDB response handler with optimized polling and comprehensive error handling
 ---
 ---This is the core function for communicating with GDB asynchronously. It sends a command
@@ -311,8 +404,41 @@ function M.async_gdb_response(command, callback, opts)
 	end
 
 	-- Send the command with error handling
-	local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, command)
+	-- Try multiple methods to send GDB commands
+	local send_ok, send_err = false, "No send method available"
+	local send_method = "none"
+
+	-- Method 1: Try TermDebugSendCommand (correct function name)
+	if vim.fn.exists('*TermDebugSendCommand') == 1 then
+		send_method = "TermDebugSendCommand"
+		vim.notify("Sending GDB command via TermDebugSendCommand: " .. command, vim.log.levels.INFO)
+		send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, command)
+	-- Method 2: Try TermdebugCommand (fallback)
+	elseif vim.fn.exists('*TermdebugCommand') == 1 then
+		send_method = "TermdebugCommand"
+		vim.notify("Sending GDB command via TermdebugCommand: " .. command, vim.log.levels.INFO)
+		send_ok, send_err = pcall(vim.fn.TermdebugCommand, command)
+	-- Method 3: Try sending to GDB buffer directly
+	else
+		local gdb_buf = M.find_gdb_buffer()
+		if gdb_buf then
+			send_method = "direct_buffer"
+			vim.notify("Sending GDB command via direct buffer: " .. command, vim.log.levels.INFO)
+			-- Try to send command by appending to GDB buffer
+			local append_ok, append_err = pcall(function()
+				vim.api.nvim_buf_set_lines(gdb_buf, -1, -1, false, {command})
+				-- Simulate pressing Enter
+				vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<CR>', true, false, true), 'n', false)
+			end)
+			send_ok, send_err = append_ok, append_err
+		else
+			send_err = "GDB buffer not found and TermdebugCommand not available"
+		end
+	end
+
+	vim.notify("Command send result: " .. tostring(send_ok) .. " via " .. send_method, vim.log.levels.INFO)
 	if not send_ok then
+		vim.notify("Failed to send command: " .. tostring(send_err), vim.log.levels.ERROR)
 		vim.schedule(function()
 			callback(nil, "Failed to send GDB command: " .. tostring(send_err))
 		end)
@@ -346,6 +472,7 @@ function M.async_gdb_response(command, callback, opts)
 	local poll_count = 0
 	local last_line_count = 0
 
+	vim.notify("Starting polling timer for command: " .. command .. " (timeout: " .. timeout .. "ms)", vim.log.levels.INFO)
 	local timer_start_ok = pcall(timer.start, timer, current_poll_interval, current_poll_interval, function()
 		local elapsed_ok, elapsed = pcall(function()
 			return (vim.loop.hrtime() - start_time) / 1000000 -- to ms
@@ -353,6 +480,7 @@ function M.async_gdb_response(command, callback, opts)
 
 		-- Check for timeout
 		if elapsed_ok and elapsed > timeout then
+			vim.notify("GDB response timeout after " .. timeout .. "ms for command: " .. command, vim.log.levels.WARN)
 			pcall(timer.stop, timer)
 			pcall(timer.close, timer)
 			vim.schedule(function()
@@ -361,6 +489,7 @@ function M.async_gdb_response(command, callback, opts)
 			return
 		elseif not elapsed_ok then
 			-- If we can't calculate elapsed time, assume timeout to be safe
+			vim.notify("Timer error: cannot calculate elapsed time", vim.log.levels.ERROR)
 			pcall(timer.stop, timer)
 			pcall(timer.close, timer)
 			vim.schedule(function()
@@ -375,13 +504,41 @@ function M.async_gdb_response(command, callback, opts)
 		vim.schedule(function()
 			local gdb_buf = M.find_gdb_buffer()
 			if not gdb_buf then
+				if poll_count % 10 == 0 then -- Log every 10th poll to avoid spam
+					vim.notify("GDB buffer not found (poll " .. poll_count .. ")", vim.log.levels.DEBUG)
+				end
 				return -- Keep polling
 			end
 
 			-- Get buffer lines with error handling
 			local lines_ok, lines = pcall(vim.api.nvim_buf_get_lines, gdb_buf, -max_lines, -1, false)
 			if not lines_ok then
+				if poll_count % 10 == 0 then
+					vim.notify("Failed to get buffer lines (poll " .. poll_count .. ")", vim.log.levels.DEBUG)
+				end
 				return -- Keep polling, buffer might be temporarily unavailable
+			end
+
+			-- Debug: Log buffer content more frequently for evaluation commands
+			local is_print_command = command:match("^print")
+			local log_frequency = is_print_command and 5 or 20 -- Log every 5 polls for print commands
+
+			if poll_count % log_frequency == 0 then
+				vim.notify("Poll " .. poll_count .. " for '" .. command .. "': Found " .. #lines .. " lines in GDB buffer", vim.log.levels.INFO)
+				if #lines > 0 then
+					local last_lines = vim.list_slice(lines, math.max(1, #lines-5), #lines)
+					vim.notify("Last 5 lines: " .. vim.inspect(last_lines), vim.log.levels.INFO)
+
+					-- Also check if our command appears in recent lines
+					local command_found_in_recent = false
+					for _, line in ipairs(last_lines) do
+						if line:match(vim.pesc(command)) then
+							command_found_in_recent = true
+							break
+						end
+					end
+					vim.notify("Command '" .. command .. "' found in recent lines: " .. tostring(command_found_in_recent), vim.log.levels.INFO)
+				end
 			end
 
 			-- Adaptive polling: if buffer isn't growing, slow down polling
@@ -397,6 +554,7 @@ function M.async_gdb_response(command, callback, opts)
 			local result = {}
 			local capture = false
 			local found_response = false
+			local found_command = false
 
 			-- Process lines from bottom to top (optimized search)
 			for i = #lines, math.max(1, #lines - 20), -1 do -- Only check last 20 lines for efficiency
@@ -405,18 +563,31 @@ function M.async_gdb_response(command, callback, opts)
 				-- Check for end of response (gdb prompt)
 				if line:match("^%(gdb%)") and capture then
 					found_response = true
+					if poll_count % 10 == 0 then
+						vim.notify("Found GDB prompt, response complete", vim.log.levels.INFO)
+					end
 					break
 				-- Check for our command
 				elseif command_pattern and line:match(command_pattern) then
 					capture = true
+					found_command = true
+					if poll_count % 10 == 0 then
+						vim.notify("Found command pattern: " .. command_pattern, vim.log.levels.INFO)
+					end
 				-- Capture response lines
 				elseif capture and not line:match("^%(gdb%)") then
 					table.insert(result, 1, line)
 				end
 			end
 
+			-- Debug: Log search results periodically
+			if poll_count % 20 == 0 then
+				vim.notify("Search results - Command found: " .. tostring(found_command) .. ", Response complete: " .. tostring(found_response) .. ", Result lines: " .. #result, vim.log.levels.INFO)
+			end
+
 			-- If we found a complete response, stop timer and callback
 			if found_response then
+				vim.notify("GDB response complete for '" .. command .. "' with " .. #result .. " result lines", vim.log.levels.INFO)
 				pcall(timer.stop, timer)
 				pcall(timer.close, timer)
 
@@ -431,6 +602,7 @@ function M.async_gdb_response(command, callback, opts)
 					M.cache_gdb_info(cache_key, result, 3000) -- Cache for 3 seconds
 				end
 
+				vim.notify("Calling callback with result: " .. vim.inspect(result), vim.log.levels.INFO)
 				if #result > 0 then
 					callback(result, nil)
 				else

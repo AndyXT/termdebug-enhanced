@@ -103,14 +103,32 @@ function M.setup_keymaps(keymaps)
     vim.notify("Warning: " .. availability_error .. " (keymaps will be set up but may not work)", vim.log.levels.WARN)
   end
 
-  -- VSCode-like debugging keymaps
-  local mappings = {
-    [keymaps.continue] = { cmd = "Continue", desc = "Continue execution" },
-    [keymaps.step_over] = { cmd = "Over", desc = "Step over" },
-    [keymaps.step_into] = { cmd = "Step", desc = "Step into" },
-    [keymaps.step_out] = { cmd = "Finish", desc = "Step out" },
-    [keymaps.stop] = { cmd = "Stop", desc = "Stop debugging" },
-    [keymaps.restart] = { cmd = function()
+  -- Validate keymaps parameter
+  if not keymaps or type(keymaps) ~= "table" then
+    table.insert(errors, "Invalid keymaps configuration")
+    return false, errors
+  end
+
+  -- VSCode-like debugging keymaps (with safe access)
+  local mappings = {}
+
+  if keymaps.continue then
+    mappings[keymaps.continue] = { cmd = "Continue", desc = "Continue execution" }
+  end
+  if keymaps.step_over then
+    mappings[keymaps.step_over] = { cmd = "Over", desc = "Step over" }
+  end
+  if keymaps.step_into then
+    mappings[keymaps.step_into] = { cmd = "Step", desc = "Step into" }
+  end
+  if keymaps.step_out then
+    mappings[keymaps.step_out] = { cmd = "Finish", desc = "Step out" }
+  end
+  if keymaps.stop then
+    mappings[keymaps.stop] = { cmd = "Stop", desc = "Stop debugging" }
+  end
+  if keymaps.restart then
+    mappings[keymaps.restart] = { cmd = function()
       local stop_ok, stop_err = pcall(vim.cmd, "Stop")
       if not stop_ok then
         vim.notify("Failed to stop debugging: " .. tostring(stop_err), vim.log.levels.ERROR)
@@ -122,8 +140,8 @@ function M.setup_keymaps(keymaps)
           vim.notify("Failed to restart debugging: " .. tostring(run_err), vim.log.levels.ERROR)
         end
       end, 100)
-    end, desc = "Restart debugging" },
-  }
+    end, desc = "Restart debugging" }
+  end
 
   -- Set up standard debugging keymaps
   for key, mapping in pairs(mappings) do
@@ -196,7 +214,7 @@ function M.setup_keymaps(keymaps)
         utils.async_gdb_response("info breakpoints", function(response, error)
           if error then
             -- No breakpoints exist or error getting them, just add one
-            utils.async_gdb_response("break " .. file .. ":" .. line, function(bp_response, bp_error)
+            utils.async_gdb_response("break " .. file .. ":" .. line, function(_, bp_error)
               if bp_error then
                 vim.notify("Failed to set breakpoint: " .. bp_error, vim.log.levels.ERROR)
               else

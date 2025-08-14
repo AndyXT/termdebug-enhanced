@@ -11,11 +11,14 @@ local M = {}
 
 local utils = require("termdebug-enhanced.utils")
 
--- Cache for the floating window
+-- Cache for the floating window with resource tracking
 ---@type number|nil
 local float_win = nil
 ---@type number|nil
 local float_buf = nil
+
+-- Resource tracking ID counter
+local resource_counter = 0
 
 -- Helper function to get config safely
 ---@return table
@@ -117,7 +120,7 @@ local function create_error_content(error_info)
   return content
 end
 
--- Clean up floating window resources
+-- Clean up floating window resources with proper tracking
 ---@return nil
 local function cleanup_float_window()
   if float_win and vim.api.nvim_win_is_valid(float_win) then
@@ -125,12 +128,14 @@ local function cleanup_float_window()
     if not ok then
       vim.notify("Failed to close evaluation window: " .. tostring(err), vim.log.levels.WARN)
     end
+    pcall(utils.untrack_resource, "eval_win_" .. tostring(float_win))
   end
   if float_buf and vim.api.nvim_buf_is_valid(float_buf) then
     local ok, err = pcall(vim.api.nvim_buf_delete, float_buf, { force = true })
     if not ok then
       vim.notify("Failed to delete evaluation buffer: " .. tostring(err), vim.log.levels.WARN)
     end
+    pcall(utils.untrack_resource, "eval_buf_" .. tostring(float_buf))
   end
   float_win = nil
   float_buf = nil
@@ -155,6 +160,20 @@ local function create_float_window(content, opts, is_error)
     return nil, nil
   end
   float_buf = buf
+
+  -- Track buffer for cleanup (with safe loading)
+  resource_counter = resource_counter + 1
+  local track_ok = pcall(function()
+    utils.track_resource("eval_buf_" .. tostring(buf), "buffer", buf, function(b)
+      if vim.api.nvim_buf_is_valid(b) then
+        vim.api.nvim_buf_delete(b, { force = true })
+      end
+    end)
+  end)
+  if not track_ok then
+    -- Fallback: track manually if utils not ready
+    -- This will be cleaned up by the cleanup_float_window function
+  end
 
   -- Process content into lines
   local lines = {}
@@ -220,6 +239,19 @@ local function create_float_window(content, opts, is_error)
     return nil, nil
   end
   float_win = win
+
+  -- Track window for cleanup (with safe loading)
+  local track_ok = pcall(function()
+    utils.track_resource("eval_win_" .. tostring(win), "window", win, function(w)
+      if vim.api.nvim_win_is_valid(w) then
+        vim.api.nvim_win_close(w, true)
+      end
+    end)
+  end)
+  if not track_ok then
+    -- Fallback: track manually if utils not ready
+    -- This will be cleaned up by the cleanup_float_window function
+  end
 
   -- Set buffer options (using modern API with error handling)
   pcall(function()
@@ -511,6 +543,12 @@ function M.evaluate_custom(expr)
     -- Show in floating window
     create_float_window(formatted, config.popup, false)
   end)
+end
+
+---Clean up all evaluation resources
+---@return nil
+function M.cleanup_all_windows()
+  cleanup_float_window()
 end
 
 return M

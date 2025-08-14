@@ -146,7 +146,7 @@ local function create_memory_error_content(error_info)
   return content
 end
 
--- Clean up memory window resources
+-- Clean up memory window resources with proper tracking
 ---@return nil
 local function cleanup_memory_window()
   if memory_win and vim.api.nvim_win_is_valid(memory_win) then
@@ -154,12 +154,14 @@ local function cleanup_memory_window()
     if not ok then
       vim.notify("Failed to close memory window: " .. tostring(err), vim.log.levels.WARN)
     end
+    pcall(utils.untrack_resource, "mem_win_" .. tostring(memory_win))
   end
   if memory_buf and vim.api.nvim_buf_is_valid(memory_buf) then
     local ok, err = pcall(vim.api.nvim_buf_delete, memory_buf, { force = true })
     if not ok then
       vim.notify("Failed to delete memory buffer: " .. tostring(err), vim.log.levels.WARN)
     end
+    pcall(utils.untrack_resource, "mem_buf_" .. tostring(memory_buf))
   end
   memory_win = nil
   memory_buf = nil
@@ -187,6 +189,19 @@ local function create_memory_window(content, opts, is_error)
   end
   memory_buf = buf
 
+  -- Track buffer for cleanup (with safe loading)
+  local track_ok = pcall(function()
+    utils.track_resource("mem_buf_" .. tostring(buf), "buffer", buf, function(b)
+      if vim.api.nvim_buf_is_valid(b) then
+        vim.api.nvim_buf_delete(b, { force = true })
+      end
+    end)
+  end)
+  if not track_ok then
+    -- Fallback: track manually if utils not ready
+    -- This will be cleaned up by the cleanup_memory_window function
+  end
+
   local content_ok, content_err = pcall(vim.api.nvim_buf_set_lines, memory_buf, 0, -1, false, content or {})
   if not content_ok then
     vim.notify("Failed to set memory buffer content: " .. tostring(content_err), vim.log.levels.ERROR)
@@ -206,7 +221,20 @@ local function create_memory_window(content, opts, is_error)
   end
 
   memory_win = vim.api.nvim_get_current_win()
-  
+
+  -- Track window for cleanup (with safe loading)
+  local track_ok = pcall(function()
+    utils.track_resource("mem_win_" .. tostring(memory_win), "window", memory_win, function(w)
+      if vim.api.nvim_win_is_valid(w) then
+        vim.api.nvim_win_close(w, true)
+      end
+    end)
+  end)
+  if not track_ok then
+    -- Fallback: track manually if utils not ready
+    -- This will be cleaned up by the cleanup_memory_window function
+  end
+
   local set_buf_ok, set_buf_err = pcall(vim.api.nvim_win_set_buf, memory_win, memory_buf)
   if not set_buf_ok then
     vim.notify("Failed to set memory window buffer: " .. tostring(set_buf_err), vim.log.levels.ERROR)

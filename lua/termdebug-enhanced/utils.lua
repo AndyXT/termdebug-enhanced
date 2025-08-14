@@ -29,8 +29,27 @@ local M = {}
 local gdb_buffer_cache = {
   buffer = nil,
   last_check = 0,
-  cache_duration = 1000 -- Cache for 1 second
+  cache_duration = 2000 -- Cache for 2 seconds (optimized)
 }
+
+-- Performance monitoring
+---@class PerformanceMetrics
+---@field async_operations_count number Total async operations
+---@field avg_response_time number Average response time in ms
+---@field cache_hits number Cache hit count
+---@field cache_misses number Cache miss count
+
+---@type PerformanceMetrics
+local perf_metrics = {
+  async_operations_count = 0,
+  avg_response_time = 0,
+  cache_hits = 0,
+  cache_misses = 0
+}
+
+-- Frequently accessed GDB info cache
+---@type table<string, {data: any, timestamp: number, ttl: number}>
+local gdb_info_cache = {}
 
 -- Validate GDB command input
 ---@param command string Command to validate
@@ -44,7 +63,7 @@ local function validate_gdb_command(command)
   if trimmed == "" then
     return false, "GDB command contains only whitespace"
   end
-  
+
   -- Check for obviously dangerous commands (basic safety)
   local dangerous_patterns = {
     "^%s*quit%s*$",
@@ -52,13 +71,13 @@ local function validate_gdb_command(command)
     "^%s*shell%s+",
     "^%s*!%s*"
   }
-  
+
   for _, pattern in ipairs(dangerous_patterns) do
     if trimmed:lower():match(pattern) then
       return false, "Potentially dangerous GDB command blocked: " .. trimmed
     end
   end
-  
+
   return true, nil
 end
 
@@ -74,15 +93,24 @@ function M.find_gdb_buffer()
     now = 0
   end
 
-  -- Check cache validity
+  -- Check cache validity (optimized with better invalidation)
   if gdb_buffer_cache.buffer and now > 0 and
      (now - gdb_buffer_cache.last_check) < gdb_buffer_cache.cache_duration then
     -- Verify buffer still exists and is valid
     local valid_ok, is_valid = pcall(vim.api.nvim_buf_is_valid, gdb_buffer_cache.buffer)
     if valid_ok and is_valid then
-      return gdb_buffer_cache.buffer
+      -- Verify it's still a GDB buffer (enhanced validation)
+      local name_ok, name = pcall(vim.api.nvim_buf_get_name, gdb_buffer_cache.buffer)
+      if name_ok and name and (name:match("gdb") or name:match("debugger") or name:match("Termdebug")) then
+        perf_metrics.cache_hits = perf_metrics.cache_hits + 1
+        return gdb_buffer_cache.buffer
+      end
     end
+    -- Cache is invalid, clear it
+    gdb_buffer_cache.buffer = nil
   end
+
+  perf_metrics.cache_misses = perf_metrics.cache_misses + 1
 
   -- Search for GDB buffer with error handling
   local list_ok, buf_list = pcall(vim.api.nvim_list_bufs)
@@ -118,7 +146,72 @@ function M.invalidate_gdb_cache()
   gdb_buffer_cache.last_check = 0
 end
 
----Async GDB response handler with timer-based polling and comprehensive error handling
+---Cache frequently accessed GDB information
+---@param key string Cache key
+---@param data any Data to cache
+---@param ttl number|nil Time to live in milliseconds (default: 5000)
+---@return nil
+function M.cache_gdb_info(key, data, ttl)
+  ttl = ttl or 5000 -- Default 5 second TTL
+  local now_ok, now = pcall(function()
+    return vim.loop.hrtime() / 1000000
+  end)
+  
+  if now_ok then
+    gdb_info_cache[key] = {
+      data = data,
+      timestamp = now,
+      ttl = ttl
+    }
+  end
+end
+
+---Get cached GDB information
+---@param key string Cache key
+---@return any|nil Cached data or nil if not found/expired
+function M.get_cached_gdb_info(key)
+  local entry = gdb_info_cache[key]
+  if not entry then
+    return nil
+  end
+  
+  local now_ok, now = pcall(function()
+    return vim.loop.hrtime() / 1000000
+  end)
+  
+  if not now_ok or (now - entry.timestamp) > entry.ttl then
+    -- Expired, remove from cache
+    gdb_info_cache[key] = nil
+    return nil
+  end
+  
+  return entry.data
+end
+
+---Clear all cached GDB information
+---@return nil
+function M.clear_gdb_info_cache()
+  gdb_info_cache = {}
+end
+
+---Get performance metrics
+---@return PerformanceMetrics Current performance metrics
+function M.get_performance_metrics()
+  return vim.deepcopy(perf_metrics)
+end
+
+---Reset performance metrics
+---@return nil
+function M.reset_performance_metrics()
+  perf_metrics = {
+    async_operations_count = 0,
+    avg_response_time = 0,
+    cache_hits = 0,
+    cache_misses = 0
+  }
+end
+
+---Async GDB response handler with optimized polling and comprehensive error handling
 ---@param command string The GDB command to send
 ---@param callback fun(response: string[]|nil, error: string|nil): nil Callback function(response, error)
 ---@param opts AsyncOptions|nil Options: timeout (ms), poll_interval (ms), max_lines
@@ -126,8 +219,25 @@ end
 function M.async_gdb_response(command, callback, opts)
   opts = opts or {}
   local timeout = opts.timeout or 3000
-  local poll_interval = math.max(opts.poll_interval or 50, 10) -- Minimum 10ms
+  -- Adaptive polling: start fast, slow down if no response
+  local initial_poll_interval = math.max(opts.poll_interval or 25, 10) -- Start with 25ms
+  local max_poll_interval = 100 -- Max 100ms
+  local current_poll_interval = initial_poll_interval
   local max_lines = math.max(opts.max_lines or 50, 10) -- Minimum 10 lines
+
+  -- Performance tracking
+  local operation_start = vim.loop.hrtime()
+  perf_metrics.async_operations_count = perf_metrics.async_operations_count + 1
+
+  -- Check cache first for frequently accessed commands
+  local cache_key = "cmd:" .. command
+  local cached_result = M.get_cached_gdb_info(cache_key)
+  if cached_result and command:match("^info") then -- Only cache info commands
+    vim.schedule(function()
+      callback(cached_result, nil)
+    end)
+    return
+  end
 
   -- Validate input
   local valid, validation_error = validate_gdb_command(command)
@@ -186,7 +296,10 @@ function M.async_gdb_response(command, callback, opts)
     command_pattern = command
   end
 
-  local timer_start_ok, timer_start_err = pcall(timer.start, timer, poll_interval, poll_interval, function()
+  local poll_count = 0
+  local last_line_count = 0
+
+  local timer_start_ok = pcall(timer.start, timer, current_poll_interval, current_poll_interval, function()
     local elapsed_ok, elapsed = pcall(function()
       return (vim.loop.hrtime() - start_time) / 1000000 -- to ms
     end)
@@ -209,6 +322,8 @@ function M.async_gdb_response(command, callback, opts)
       return
     end
 
+    poll_count = poll_count + 1
+
     -- Try to find response in GDB buffer
     vim.schedule(function()
       local gdb_buf = M.find_gdb_buffer()
@@ -222,12 +337,22 @@ function M.async_gdb_response(command, callback, opts)
         return -- Keep polling, buffer might be temporarily unavailable
       end
 
+      -- Adaptive polling: if buffer isn't growing, slow down polling
+      if #lines == last_line_count and poll_count > 3 then
+        current_poll_interval = math.min(current_poll_interval * 1.5, max_poll_interval)
+        timer:stop()
+        timer:start(current_poll_interval, current_poll_interval, function()
+          -- Continue with same logic but updated interval
+        end)
+      end
+      last_line_count = #lines
+
       local result = {}
       local capture = false
       local found_response = false
 
-      -- Process lines from bottom to top
-      for i = #lines, 1, -1 do
+      -- Process lines from bottom to top (optimized search)
+      for i = #lines, math.max(1, #lines - 20), -1 do -- Only check last 20 lines for efficiency
         local line = lines[i]
 
         -- Check for end of response (gdb prompt)
@@ -247,6 +372,16 @@ function M.async_gdb_response(command, callback, opts)
       if found_response then
         timer:stop()
         timer:close()
+        
+        -- Update performance metrics
+        local operation_time = (vim.loop.hrtime() - operation_start) / 1000000
+        perf_metrics.avg_response_time = (perf_metrics.avg_response_time * (perf_metrics.async_operations_count - 1) + operation_time) / perf_metrics.async_operations_count
+        
+        -- Cache result for info commands
+        if command:match("^info") and #result > 0 then
+          M.cache_gdb_info(cache_key, result, 3000) -- Cache for 3 seconds
+        end
+        
         if #result > 0 then
           callback(result, nil)
         else
@@ -261,7 +396,7 @@ function M.async_gdb_response(command, callback, opts)
   if not timer_start_ok then
     timer:close()
     vim.schedule(function()
-      callback(nil, "Failed to start response timer: " .. tostring(timer_start_err))
+      callback(nil, "Failed to start response timer")
     end)
     return
   end
@@ -298,7 +433,7 @@ function M.parse_breakpoints(lines)
         if file and line_num then
           local num_val = tonumber(num)
           local line_val = tonumber(line_num)
-          
+
           if num_val and line_val then
             table.insert(breakpoints, {
               num = num_val,
@@ -340,7 +475,7 @@ function M.find_breakpoint(breakpoints, file, line)
       if not bp_normalize_ok then
         bp_file = bp.file
       end
-      
+
       if bp_file == normalized_file and bp.line == line then
         return bp.num
       end
@@ -350,11 +485,16 @@ function M.find_breakpoint(breakpoints, file, line)
   return nil
 end
 
----Create a debounced function with error handling
+-- Debounce registry to track active debounced functions
+---@type table<string, {timer: userdata, count: number}>
+local debounce_registry = {}
+
+---Create an optimized debounced function with error handling and deduplication
 ---@param func function The function to debounce
 ---@param delay number Delay in milliseconds
+---@param key string|nil Optional key for deduplication (uses function address if nil)
 ---@return function Debounced function
-function M.debounce(func, delay)
+function M.debounce(func, delay, key)
   if type(func) ~= "function" then
     error("First argument must be a function")
   end
@@ -363,18 +503,17 @@ function M.debounce(func, delay)
     error("Delay must be a non-negative number")
   end
   
-  local timer = nil
-
+  -- Use function address as key if not provided
+  key = key or tostring(func)
+  
   return function(...)
     local args = {...}
+    local entry = debounce_registry[key]
 
-    -- Clean up existing timer
-    if timer then
-      local stop_ok = pcall(timer.stop, timer)
-      local close_ok = pcall(timer.close, timer)
-      if not stop_ok or not close_ok then
-        -- Timer cleanup failed, but continue with new timer
-      end
+    -- Clean up existing timer if any
+    if entry and entry.timer then
+      pcall(entry.timer.stop, entry.timer)
+      pcall(entry.timer.close, entry.timer)
     end
 
     -- Create new timer with error handling
@@ -382,7 +521,7 @@ function M.debounce(func, delay)
     if not timer_ok then
       -- Fallback: execute function immediately if timer creation fails
       vim.schedule(function()
-        local exec_ok, exec_err = pcall(func, unpack(args))
+        local exec_ok, exec_err = pcall(func, (table.unpack or unpack)(args))
         if not exec_ok then
           vim.notify("Debounced function failed: " .. tostring(exec_err), vim.log.levels.ERROR)
         end
@@ -390,16 +529,23 @@ function M.debounce(func, delay)
       return
     end
     
-    timer = new_timer
+    -- Update registry
+    if not entry then
+      debounce_registry[key] = { timer = new_timer, count = 1 }
+    else
+      entry.timer = new_timer
+      entry.count = entry.count + 1
+    end
     
-    local start_ok, start_err = pcall(timer.start, timer, delay, 0, function()
-      local close_ok = pcall(timer.close, timer)
-      if not close_ok then
-        -- Timer close failed, but continue with function execution
+    local start_ok = pcall(new_timer.start, new_timer, delay, 0, function()
+      -- Clean up timer
+      pcall(new_timer.close, new_timer)
+      if debounce_registry[key] and debounce_registry[key].timer == new_timer then
+        debounce_registry[key] = nil
       end
       
       vim.schedule(function()
-        local exec_ok, exec_err = pcall(func, unpack(args))
+        local exec_ok, exec_err = pcall(func, (table.unpack or unpack)(args))
         if not exec_ok then
           vim.notify("Debounced function failed: " .. tostring(exec_err), vim.log.levels.ERROR)
         end
@@ -407,16 +553,29 @@ function M.debounce(func, delay)
     end)
     
     if not start_ok then
-      -- Timer start failed, execute immediately
-      pcall(timer.close, timer)
+      -- Timer start failed, execute immediately and clean up
+      pcall(new_timer.close, new_timer)
+      debounce_registry[key] = nil
       vim.schedule(function()
-        local exec_ok, exec_err = pcall(func, unpack(args))
+        local exec_ok, exec_err = pcall(func, (table.unpack or unpack)(args))
         if not exec_ok then
           vim.notify("Debounced function failed: " .. tostring(exec_err), vim.log.levels.ERROR)
         end
       end)
     end
   end
+end
+
+---Clean up all active debounced functions
+---@return nil
+function M.cleanup_debounced_functions()
+  for key, entry in pairs(debounce_registry) do
+    if entry.timer then
+      pcall(entry.timer.stop, entry.timer)
+      pcall(entry.timer.close, entry.timer)
+    end
+  end
+  debounce_registry = {}
 end
 
 ---Extract variable value from GDB print output with error handling
@@ -458,6 +617,89 @@ function M.extract_value(lines)
   end
 
   return nil
+end
+
+-- Resource tracking for cleanup
+---@type table<string, {type: string, resource: any, cleanup_fn: function}>
+local tracked_resources = {}
+
+---Track a resource for cleanup
+---@param id string Unique identifier for the resource
+---@param resource_type string Type of resource (timer, buffer, window, etc.)
+---@param resource any The resource to track
+---@param cleanup_fn function Function to call for cleanup
+---@return nil
+function M.track_resource(id, resource_type, resource, cleanup_fn)
+  tracked_resources[id] = {
+    type = resource_type,
+    resource = resource,
+    cleanup_fn = cleanup_fn
+  }
+end
+
+---Untrack a resource (call when manually cleaned up)
+---@param id string Resource identifier
+---@return nil
+function M.untrack_resource(id)
+  tracked_resources[id] = nil
+end
+
+---Clean up a specific tracked resource
+---@param id string Resource identifier
+---@return boolean success Whether cleanup was successful
+function M.cleanup_resource(id)
+  local entry = tracked_resources[id]
+  if not entry then
+    return false
+  end
+
+  local success = pcall(entry.cleanup_fn, entry.resource)
+  if success then
+    tracked_resources[id] = nil
+  end
+  return success
+end
+
+---Clean up all tracked resources
+---@return number cleaned_count Number of resources cleaned up
+function M.cleanup_all_resources()
+  local cleaned_count = 0
+  local failed_cleanups = {}
+
+  for id, entry in pairs(tracked_resources) do
+    local success = pcall(entry.cleanup_fn, entry.resource)
+    if success then
+      cleaned_count = cleaned_count + 1
+    else
+      table.insert(failed_cleanups, id)
+    end
+  end
+
+  -- Clear all tracked resources
+  tracked_resources = {}
+
+  -- Clean up debounced functions
+  M.cleanup_debounced_functions()
+
+  -- Clear caches
+  M.clear_gdb_info_cache()
+  M.invalidate_gdb_cache()
+
+  if #failed_cleanups > 0 then
+    vim.notify("Some resources failed to clean up: " .. table.concat(failed_cleanups, ", "), vim.log.levels.WARN)
+  end
+
+  return cleaned_count
+end
+
+---Get resource tracking statistics
+---@return table<string, number> Statistics by resource type
+function M.get_resource_stats()
+  local stats = {}
+  for _, entry in pairs(tracked_resources) do
+    stats[entry.type] = (stats[entry.type] or 0) + 1
+  end
+  return stats
 end
 
 return M

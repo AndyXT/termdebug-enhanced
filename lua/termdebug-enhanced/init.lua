@@ -105,11 +105,8 @@ local function setup_autocmds()
     callback = function()
       vim.g.termdebug_running = false
       require("termdebug-enhanced.keymaps").cleanup_keymaps()
-      -- Clean up any open windows
-      local memory = require("termdebug-enhanced.memory")
-      if memory.cleanup_all_windows then
-        memory.cleanup_all_windows()
-      end
+      -- Clean up all resources
+      M.cleanup_all_resources()
     end,
   })
 
@@ -118,10 +115,7 @@ local function setup_autocmds()
     group = group,
     callback = function()
       vim.g.termdebug_running = false
-      local ok, memory = pcall(require, "termdebug-enhanced.memory")
-      if ok and memory.cleanup_all_windows then
-        memory.cleanup_all_windows()
-      end
+      M.cleanup_all_resources()
     end,
   })
 end
@@ -174,7 +168,8 @@ local function validate_gdbinit(gdbinit)
 
   -- Check if file exists and is readable
   if vim.fn.filereadable(trimmed) == 0 then
-    if vim.fn.fileexists(trimmed) == 1 then
+    local exists_ok, exists = pcall(vim.fn.fileexists, trimmed)
+    if exists_ok and exists == 1 then
       return false, nil, "GDB init file exists but is not readable: " .. trimmed
     else
       return false, nil, "GDB init file not found: " .. trimmed .. " (will be ignored)"
@@ -494,6 +489,67 @@ function M.setup(opts)
     vim.notify("Termdebug Enhanced setup completed successfully", vim.log.levels.INFO)
     return true, {}
   end
+end
+
+---Clean up all plugin resources
+---@return number cleaned_count Number of resources cleaned up
+function M.cleanup_all_resources()
+  local total_cleaned = 0
+
+  -- Clean up utils resources
+  local utils_ok, utils = pcall(require, "termdebug-enhanced.utils")
+  if utils_ok and utils.cleanup_all_resources then
+    total_cleaned = total_cleaned + utils.cleanup_all_resources()
+  end
+
+  -- Clean up memory windows
+  local memory_ok, memory = pcall(require, "termdebug-enhanced.memory")
+  if memory_ok and memory.cleanup_all_windows then
+    memory.cleanup_all_windows()
+  end
+
+  -- Clean up evaluation windows
+  local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+  if eval_ok and evaluate.cleanup_all_windows then
+    evaluate.cleanup_all_windows()
+  end
+
+  -- Clean up keymaps
+  local keymaps_ok, keymaps = pcall(require, "termdebug-enhanced.keymaps")
+  if keymaps_ok and keymaps.cleanup_keymaps then
+    keymaps.cleanup_keymaps()
+  end
+
+  if total_cleaned > 0 then
+    vim.notify("Cleaned up " .. total_cleaned .. " resources", vim.log.levels.INFO)
+  end
+
+  return total_cleaned
+end
+
+---Get resource usage statistics
+---@return table Resource usage statistics
+function M.get_resource_stats()
+  local stats = {
+    total_resources = 0,
+    by_type = {},
+    performance = {}
+  }
+
+  local utils_ok, utils = pcall(require, "termdebug-enhanced.utils")
+  if utils_ok then
+    if utils.get_resource_stats then
+      stats.by_type = utils.get_resource_stats()
+      for _, count in pairs(stats.by_type) do
+        stats.total_resources = stats.total_resources + count
+      end
+    end
+    if utils.get_performance_metrics then
+      stats.performance = utils.get_performance_metrics()
+    end
+  end
+
+  return stats
 end
 
 return M

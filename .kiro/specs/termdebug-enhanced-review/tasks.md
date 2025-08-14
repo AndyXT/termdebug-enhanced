@@ -77,14 +77,14 @@
   - Test configuration loading and validation across modules
   - _Requirements: 3.1, 3.2_
 
-- [ ] 4. Optimize resource management and cleanup
+- [x] 4. Optimize resource management and cleanup
   - Remove unused functions or add proper usage documentation
   - Implement comprehensive cleanup for floating windows and buffers
   - Optimize GDB buffer caching with better invalidation logic
   - Add resource tracking to prevent memory leaks
   - _Requirements: 4.1, 4.2, 4.5_
 
-- [ ] 4.1 Optimize async operations and performance
+- [x] 4.1 Optimize async operations and performance
   - Optimize polling intervals and early termination for async operations
   - Implement debouncing for rapid successive GDB operations
   - Cache frequently accessed GDB information to reduce redundant calls

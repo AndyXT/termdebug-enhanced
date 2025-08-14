@@ -235,21 +235,51 @@ local function create_float_window(content, opts, is_error)
 		return nil, nil
 	end
 
-	-- Calculate window size
-	local width = opts.width or 60
-	local height = math.min(opts.height or 10, math.max(#lines, 3))
+	-- Calculate window size based on content
+	local max_line_length = 0
+	for _, line in ipairs(lines) do
+		max_line_length = math.max(max_line_length, vim.fn.strdisplaywidth(line))
+	end
+
+	-- Dynamic width: at least 40, at most 120, or content width + padding
+	local width = math.min(120, math.max(40, max_line_length + 4))
+
+	-- Dynamic height: at least 3, at most 20, or content height + padding
+	local height = math.min(20, math.max(3, #lines + 2))
+
+	-- Get cursor position for better positioning
+	local cursor_pos = vim.api.nvim_win_get_cursor(0)
+	local cursor_row = cursor_pos[1]
+	local cursor_col = cursor_pos[2]
+
+	-- Calculate position to avoid going off screen
+	local screen_height = vim.o.lines
+	local screen_width = vim.o.columns
+
+	-- Position below cursor, but move up if it would go off screen
+	local row = 1
+	if cursor_row + height + 3 > screen_height then
+		row = -(height + 1) -- Position above cursor instead
+	end
+
+	-- Position at cursor column, but adjust if it would go off screen
+	local col = 0
+	if cursor_col + width > screen_width then
+		col = -(width - 10) -- Move left to fit on screen
+	end
 
 	-- Use cursor-relative positioning for better reliability
 	local win_opts = {
 		relative = "cursor",
-		row = 1,  -- 1 line below cursor
-		col = 0,  -- Same column as cursor
+		row = row,
+		col = col,
 		width = width,
 		height = height,
 		style = "minimal",
 		border = opts.border or "rounded",
 		noautocmd = true,
-		focusable = false,  -- Don't steal focus
+		focusable = true,  -- Make it focusable for scrolling
+		zindex = 50,  -- Ensure it appears above other windows
 	}
 
 	vim.notify("Creating window with opts: " .. vim.inspect(win_opts), vim.log.levels.INFO)
@@ -280,6 +310,11 @@ local function create_float_window(content, opts, is_error)
 		vim.bo[float_buf].bufhidden = "wipe"
 		vim.bo[float_buf].filetype = is_error and "text" or "gdb"
 		vim.bo[float_buf].modifiable = false
+		vim.bo[float_buf].readonly = true
+		vim.bo[float_buf].buftype = "nofile"
+		vim.bo[float_buf].swapfile = false
+		vim.bo[float_buf].wrap = true  -- Enable word wrap for long lines
+		vim.bo[float_buf].linebreak = true  -- Break at word boundaries
 	end)
 
 	-- Add syntax highlighting for GDB output
@@ -287,6 +322,24 @@ local function create_float_window(content, opts, is_error)
 		local highlight = is_error and "Normal:ErrorMsg,FloatBorder:ErrorMsg"
 			or "Normal:NormalFloat,FloatBorder:FloatBorder"
 		vim.wo[float_win].winhl = highlight
+	end)
+
+	-- Add scrolling keymaps to the popup window
+	pcall(function()
+		local opts_map = { noremap = true, silent = true }
+
+		-- Scrolling keymaps
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "j", "<C-e>", opts_map)  -- Scroll down
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "k", "<C-y>", opts_map)  -- Scroll up
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<Down>", "<C-e>", opts_map)
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<Up>", "<C-y>", opts_map)
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<PageDown>", "<C-f>", opts_map)
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<PageUp>", "<C-b>", opts_map)
+
+		-- Close keymaps
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "q", ":close<CR>", opts_map)
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<Esc>", ":close<CR>", opts_map)
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "<CR>", ":close<CR>", opts_map)
 	end)
 
 	-- Close on cursor move or insert mode (with error handling)
@@ -523,37 +576,102 @@ function M.test_direct_evaluation()
 			vim.defer_fn(function()
 				local gdb_buf = utils.find_gdb_buffer()
 				if gdb_buf then
-					local lines = vim.api.nvim_buf_get_lines(gdb_buf, -10, -1, false)
-					vim.notify("Recent GDB buffer lines: " .. vim.inspect(lines), vim.log.levels.INFO)
+					-- Get more lines to ensure we capture the response
+					local lines = vim.api.nvim_buf_get_lines(gdb_buf, -50, -1, false)
+					vim.notify("Recent GDB buffer lines (" .. #lines .. " lines): " .. vim.inspect(lines), vim.log.levels.INFO)
 
-					-- Look for the response
+					-- Try multiple approaches to find the response
 					local response_lines = {}
-					local found_print = false
+
+					-- Approach 1: Look for $N = value pattern and capture multi-line response
+					local found_start = false
+					local start_index = nil
+
+					-- First, find where the response starts (the $N = line)
 					for i = #lines, 1, -1 do
 						local line = lines[i]
-						if line:match("^%(gdb%)") and found_print then
+						if line:match("%$%d+%s*=") then
+							start_index = i
+							found_start = true
+							vim.notify("Found $N = pattern at line " .. i .. ": " .. line, vim.log.levels.INFO)
 							break
-						elseif line:match("print " .. vim.pesc(word)) then
-							found_print = true
-						elseif found_print and not line:match("^%(gdb%)") and line ~= "" then
-							table.insert(response_lines, 1, line)
 						end
 					end
 
-					vim.notify("Extracted response: " .. vim.inspect(response_lines), vim.log.levels.INFO)
+					-- If we found the start, capture all lines until the next (gdb) prompt
+					if found_start and start_index then
+						for i = start_index, #lines do
+							local line = lines[i]
+							if line:match("^%(gdb%)") then
+								-- Stop at the next GDB prompt
+								break
+							else
+								table.insert(response_lines, line)
+								vim.notify("Captured response line: " .. line, vim.log.levels.INFO)
+							end
+						end
+					end
+
+					-- Approach 2: If no $N pattern, look for lines after our print command
+					if #response_lines == 0 then
+						local found_print = false
+						for i = #lines, 1, -1 do
+							local line = lines[i]
+							if line:match("^%(gdb%)") and found_print then
+								break
+							elseif line:match("print") and line:match(vim.pesc(word)) then
+								found_print = true
+								vim.notify("Found print command: " .. line, vim.log.levels.INFO)
+							elseif found_print and not line:match("^%(gdb%)") and line ~= "" then
+								table.insert(response_lines, 1, line)
+								vim.notify("Found response line: " .. line, vim.log.levels.INFO)
+							end
+						end
+					end
+
+					-- Approach 3: If still nothing, look for any non-empty, non-gdb-prompt lines
+					if #response_lines == 0 then
+						vim.notify("No response found with standard patterns, checking all recent lines...", vim.log.levels.INFO)
+						for i = math.max(1, #lines - 5), #lines do
+							local line = lines[i]
+							if line and line ~= "" and not line:match("^%(gdb%)") and not line:match("^print") then
+								table.insert(response_lines, line)
+								vim.notify("Found potential response: " .. line, vim.log.levels.INFO)
+							end
+						end
+					end
+
+					vim.notify("Final extracted response: " .. vim.inspect(response_lines), vim.log.levels.INFO)
 
 					if #response_lines > 0 then
 						-- Create popup with the response
 						local config = get_config()
 						local content = {
 							"✓ Direct Evaluation: " .. word,
-							string.rep("─", 30),
+							string.rep("─", math.max(30, #word + 20)),
 							"",
 							"Response found:",
+							""
 						}
+
+						-- Format response lines with proper wrapping
 						for _, line in ipairs(response_lines) do
-							table.insert(content, "  " .. line)
+							-- Split very long lines for better display
+							if #line > 80 then
+								local wrapped_lines = {}
+								for i = 1, #line, 80 do
+									table.insert(wrapped_lines, line:sub(i, i + 79))
+								end
+								for _, wrapped_line in ipairs(wrapped_lines) do
+									table.insert(content, "  " .. wrapped_line)
+								end
+							else
+								table.insert(content, "  " .. line)
+							end
 						end
+
+						table.insert(content, "")
+						table.insert(content, "Use j/k or ↑/↓ to scroll, q/Esc to close")
 
 						local win, _ = create_float_window(content, config.popup, false)
 						if win then
@@ -574,6 +692,44 @@ function M.test_direct_evaluation()
 	end
 
 	vim.notify("=== End Direct Evaluation Test ===", vim.log.levels.INFO)
+end
+
+---Debug all buffers to find where GDB output is going
+---@return nil
+function M.debug_all_buffers()
+	vim.notify("=== Debugging All Buffers ===", vim.log.levels.INFO)
+
+	local buffers = vim.api.nvim_list_bufs()
+	vim.notify("Found " .. #buffers .. " total buffers", vim.log.levels.INFO)
+
+	for _, buf in ipairs(buffers) do
+		if vim.api.nvim_buf_is_valid(buf) then
+			local name = vim.api.nvim_buf_get_name(buf)
+			local lines = vim.api.nvim_buf_get_lines(buf, -10, -1, false)
+
+			-- Check if this buffer contains GDB-like content
+			local has_gdb_content = false
+			for _, line in ipairs(lines) do
+				if line:match("%(gdb%)") or line:match("%$%d+%s*=") or line:match("print") then
+					has_gdb_content = true
+					break
+				end
+			end
+
+			if has_gdb_content or name:match("[Gg]db") or name:match("[Dd]ebug") then
+				vim.notify("Buffer " .. buf .. " (" .. name .. ") - GDB content detected:", vim.log.levels.INFO)
+				vim.notify("Last 10 lines: " .. vim.inspect(lines), vim.log.levels.INFO)
+			else
+				vim.notify("Buffer " .. buf .. " (" .. name .. ") - No GDB content", vim.log.levels.DEBUG)
+			end
+		end
+	end
+
+	-- Also check what find_gdb_buffer returns
+	local gdb_buf = utils.find_gdb_buffer()
+	vim.notify("utils.find_gdb_buffer() returned: " .. tostring(gdb_buf), vim.log.levels.INFO)
+
+	vim.notify("=== End Buffer Debug ===", vim.log.levels.INFO)
 end
 
 ---Test function to verify GDB response mechanism

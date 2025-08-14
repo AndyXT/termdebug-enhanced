@@ -661,6 +661,15 @@ function M.setup(opts)
 			end
 		end, { desc = "Test direct evaluation without polling" })
 
+		vim.api.nvim_create_user_command("DebugBuffers", function()
+			local eval_ok, evaluate = pcall(require, "termdebug-enhanced.evaluate")
+			if eval_ok then
+				evaluate.debug_all_buffers()
+			else
+				vim.notify("Failed to load evaluate module: " .. tostring(evaluate), vim.log.levels.ERROR)
+			end
+		end, { desc = "Debug all buffers to find GDB output" })
+
 		vim.api.nvim_create_user_command("MemoryView", function(args)
 			local mem_ok, memory = pcall(require, "termdebug-enhanced.memory")
 			if mem_ok then

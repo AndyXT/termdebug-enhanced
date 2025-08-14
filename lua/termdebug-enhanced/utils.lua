@@ -552,31 +552,42 @@ function M.async_gdb_response(command, callback, opts)
 			last_line_count = #lines
 
 			local result = {}
-			local capture = false
 			local found_response = false
 			local found_command = false
+			local command_line_index = nil
 
-			-- Process lines from bottom to top (optimized search)
-			for i = #lines, math.max(1, #lines - 20), -1 do -- Only check last 20 lines for efficiency
+			-- First pass: find the command line (search from bottom to top for most recent)
+			for i = #lines, math.max(1, #lines - 30), -1 do
 				local line = lines[i]
-
-				-- Check for end of response (gdb prompt)
-				if line:match("^%(gdb%)") and capture then
-					found_response = true
-					if poll_count % 10 == 0 then
-						vim.notify("Found GDB prompt, response complete", vim.log.levels.INFO)
-					end
-					break
-				-- Check for our command
-				elseif command_pattern and line:match(command_pattern) then
-					capture = true
+				if command_pattern and line:match(command_pattern) then
+					command_line_index = i
 					found_command = true
 					if poll_count % 10 == 0 then
-						vim.notify("Found command pattern: " .. command_pattern, vim.log.levels.INFO)
+						vim.notify("Found command at line " .. i .. ": " .. line, vim.log.levels.INFO)
 					end
-				-- Capture response lines
-				elseif capture and not line:match("^%(gdb%)") then
-					table.insert(result, 1, line)
+					break
+				end
+			end
+
+			-- Second pass: if command found, capture all response lines after it
+			if found_command and command_line_index then
+				for i = command_line_index + 1, #lines do
+					local line = lines[i]
+
+					-- Stop at the next GDB prompt (response complete)
+					if line:match("^%(gdb%)") then
+						found_response = true
+						if poll_count % 10 == 0 then
+							vim.notify("Found GDB prompt at line " .. i .. ", response complete with " .. #result .. " lines", vim.log.levels.INFO)
+						end
+						break
+					-- Capture non-empty response lines
+					elseif line and line ~= "" then
+						table.insert(result, line)
+						if poll_count % 10 == 0 then
+							vim.notify("Captured response line " .. #result .. ": " .. line, vim.log.levels.INFO)
+						end
+					end
 				end
 			end
 

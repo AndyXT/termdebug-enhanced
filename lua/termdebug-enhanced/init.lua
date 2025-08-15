@@ -31,6 +31,7 @@
 ---@field watch_remove string Remove watch keymap
 ---@field memory_view string View memory keymap
 ---@field memory_edit string Edit memory keymap
+---@field memory_popup string Show memory popup keymap
 ---@field variable_set string Set variable keymap
 
 ---@class termdebug-enhanced
@@ -74,6 +75,7 @@ M.config = {
 		watch_remove = "<leader>dW",
 		memory_view = "<leader>dm",
 		memory_edit = "<leader>dM",
+		memory_popup = "<leader>dp",
 		variable_set = "<leader>ds",
 	},
 }

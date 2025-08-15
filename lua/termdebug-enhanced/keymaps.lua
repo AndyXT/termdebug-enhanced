@@ -655,6 +655,30 @@ function M.setup_keymaps(keymaps)
 		end
 	end
 
+	-- Memory popup view
+	if keymaps.memory_popup and keymaps.memory_popup ~= "" then
+		total_count = total_count + 1
+		local valid, validation_error = validate_keymap(keymaps.memory_popup)
+		if not valid then
+			table.insert(errors, "Invalid memory_popup keymap '" .. keymaps.memory_popup .. "': " .. validation_error)
+		else
+			local keymap_success, keymap_error = safe_set_keymap("n", keymaps.memory_popup, function()
+				local mem_ok, mem_err = pcall(function()
+					get_memory().show_memory_popup()
+				end)
+				if not mem_ok then
+					vim.notify("Memory popup failed: " .. tostring(mem_err), vim.log.levels.ERROR)
+				end
+			end, { desc = "Show memory popup at cursor" })
+			if keymap_success then
+				table.insert(active_keymaps, { mode = "n", key = keymaps.memory_popup })
+				success_count = success_count + 1
+			else
+				table.insert(errors, keymap_error)
+			end
+		end
+	end
+
 	-- Variable set
 	if keymaps.variable_set and keymaps.variable_set ~= "" then
 		total_count = total_count + 1

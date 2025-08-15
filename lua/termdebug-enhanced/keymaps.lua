@@ -125,11 +125,11 @@ local function try_debug_command(vim_cmd, gdb_cmd, description)
 		vim.notify(description .. " executed via :" .. vim_cmd, vim.log.levels.DEBUG)
 		return true
 	end
-	
+
 	vim.notify(vim_cmd .. " command failed: " .. tostring(vim_err), vim.log.levels.DEBUG)
-	
+
 	-- Method 2: Try direct GDB command
-	if vim.fn.exists('*TermDebugSendCommand') == 1 then
+	if vim.fn.exists("*TermDebugSendCommand") == 1 then
 		local gdb_ok, gdb_err = pcall(vim.fn.TermDebugSendCommand, gdb_cmd)
 		if gdb_ok then
 			vim.notify(description .. " executed via GDB '" .. gdb_cmd .. "'", vim.log.levels.DEBUG)
@@ -137,7 +137,7 @@ local function try_debug_command(vim_cmd, gdb_cmd, description)
 		end
 		vim.notify("Direct GDB command failed: " .. tostring(gdb_err), vim.log.levels.ERROR)
 	end
-	
+
 	vim.notify("Failed to execute " .. description, vim.log.levels.ERROR)
 	return false
 end
@@ -179,27 +179,27 @@ end
 ---@return boolean success
 local function setup_single_keymap(key, mode, callback, description, errors, validate_empty)
 	validate_empty = validate_empty or false
-	
+
 	if not key then
 		if validate_empty then
 			table.insert(errors, "Missing " .. description .. " keymap")
 		end
 		return false
 	end
-	
+
 	if key == "" then
 		if validate_empty then
 			table.insert(errors, "Empty " .. description .. " keymap")
 		end
 		return false
 	end
-	
+
 	local valid, validation_error = validate_keymap(key)
 	if not valid then
 		table.insert(errors, "Invalid " .. description .. " keymap '" .. key .. "': " .. validation_error)
 		return false
 	end
-	
+
 	local keymap_success, keymap_error = safe_set_keymap(mode, key, callback, { desc = description })
 	if keymap_success then
 		table.insert(active_keymaps, { mode = mode, key = key })
@@ -219,7 +219,7 @@ local function set_breakpoint(file, line)
 			vim.notify("Failed to set breakpoint: " .. error, vim.log.levels.ERROR)
 			return
 		end
-		
+
 		local response_text = response and table.concat(response, " ") or ""
 		if response_text:match("[Ee]rror") or response_text:match("[Ff]ailed") then
 			vim.notify("Breakpoint creation failed: " .. response_text, vim.log.levels.WARN)
@@ -241,12 +241,15 @@ local function remove_breakpoint(bp_num, file, line)
 			vim.notify("Failed to remove breakpoint: " .. error, vim.log.levels.ERROR)
 			return
 		end
-		
+
 		local response_text = response and table.concat(response, " ") or ""
 		if response_text:match("[Ee]rror") or response_text:match("[Ff]ailed") then
 			vim.notify("Breakpoint deletion failed: " .. response_text, vim.log.levels.WARN)
 		else
-			vim.notify("Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line, vim.log.levels.INFO)
+			vim.notify(
+				"Breakpoint " .. bp_num .. " removed from " .. vim.fn.fnamemodify(file, ":t") .. ":" .. line,
+				vim.log.levels.INFO
+			)
 		end
 	end, { timeout = 3000 })
 end
@@ -260,30 +263,31 @@ local function create_breakpoint_command()
 			vim.notify("Cannot toggle breakpoint: " .. bp_error, vim.log.levels.ERROR)
 			return
 		end
-		
+
 		local line_ok, line = pcall(vim.fn.line, ".")
 		local file_ok, file = pcall(vim.fn.expand, "%:p")
-		
+
 		if not line_ok or not file_ok or file == "" then
 			vim.notify("Cannot determine current file/line for breakpoint", vim.log.levels.ERROR)
 			return
 		end
-		
+
 		utils.async_gdb_response("info breakpoints", function(response, error)
 			if error then
 				vim.notify("Failed to check breakpoints: " .. error, vim.log.levels.ERROR)
 				return
 			end
-			
-			local no_breakpoints = not response or #response == 0 or 
-				table.concat(response, " "):match("[Nn]o breakpoints")
-			
+
+			local no_breakpoints = not response
+				or #response == 0
+				or table.concat(response, " "):match("[Nn]o breakpoints")
+
 			if no_breakpoints then
 				set_breakpoint(file, line)
 			else
 				local breakpoints = utils.parse_breakpoints(response)
 				local bp_num = utils.find_breakpoint(breakpoints, file, line)
-				
+
 				if bp_num then
 					remove_breakpoint(bp_num, file, line)
 				else
@@ -316,26 +320,31 @@ end
 ---@return number success_count
 local function setup_step_keymaps(keymaps, errors)
 	local commands = {
-		{ key = keymaps.continue, cmd = { vim_cmd = "Continue", gdb_cmd = "continue", description = "Continue execution" } },
+		{
+			key = keymaps.continue,
+			cmd = { vim_cmd = "Continue", gdb_cmd = "continue", description = "Continue execution" },
+		},
 		{ key = keymaps.step_over, cmd = { vim_cmd = "Over", gdb_cmd = "next", description = "Step over" } },
 		{ key = keymaps.step_into, cmd = { vim_cmd = "Step", gdb_cmd = "step", description = "Step into" } },
 		{ key = keymaps.step_out, cmd = { vim_cmd = "Finish", gdb_cmd = "finish", description = "Step out" } },
 	}
-	
+
 	local success_count = 0
 	for _, command in ipairs(commands) do
-		if setup_single_keymap(
-			command.key, 
-			"n", 
-			create_debug_command(command.cmd), 
-			command.cmd.description, 
-			errors,
-			true  -- validate empty keys
-		) then
+		if
+			setup_single_keymap(
+				command.key,
+				"n",
+				create_debug_command(command.cmd),
+				command.cmd.description,
+				errors,
+				true -- validate empty keys
+			)
+		then
 			success_count = success_count + 1
 		end
 	end
-	
+
 	return success_count
 end
 
@@ -345,15 +354,17 @@ end
 ---@return number success_count
 local function setup_control_keymaps(keymaps, errors)
 	local success_count = 0
-	
-	if setup_single_keymap(keymaps.stop, "n", function() vim.cmd("Stop") end, "Stop debugging", errors) then
+
+	if setup_single_keymap(keymaps.stop, "n", function()
+		vim.cmd("Stop")
+	end, "Stop debugging", errors) then
 		success_count = success_count + 1
 	end
-	
+
 	if setup_single_keymap(keymaps.restart, "n", create_restart_command(), "Restart debugging", errors) then
 		success_count = success_count + 1
 	end
-	
+
 	return success_count
 end
 
@@ -363,17 +374,13 @@ end
 ---@return number success_count
 local function setup_breakpoint_keymaps(keymaps, errors)
 	local success_count = 0
-	
-	if setup_single_keymap(
-		keymaps.toggle_breakpoint, 
-		"n", 
-		create_breakpoint_command(), 
-		"Toggle breakpoint", 
-		errors
-	) then
+
+	if
+		setup_single_keymap(keymaps.toggle_breakpoint, "n", create_breakpoint_command(), "Toggle breakpoint", errors)
+	then
 		success_count = success_count + 1
 	end
-	
+
 	return success_count
 end
 
@@ -383,27 +390,31 @@ end
 ---@return number success_count
 local function setup_evaluation_keymaps(keymaps, errors)
 	local success_count = 0
-	
-	if setup_single_keymap(
-		keymaps.evaluate, 
-		"n", 
-		create_protected_call(get_eval, "evaluate_under_cursor", "Evaluation failed"), 
-		"Evaluate expression under cursor", 
-		errors
-	) then
+
+	if
+		setup_single_keymap(
+			keymaps.evaluate,
+			"n",
+			create_protected_call(get_eval, "evaluate_under_cursor", "Evaluation failed"),
+			"Evaluate expression under cursor",
+			errors
+		)
+	then
 		success_count = success_count + 1
 	end
-	
-	if setup_single_keymap(
-		keymaps.evaluate_visual, 
-		"v", 
-		create_protected_call(get_eval, "evaluate_selection", "Visual evaluation failed"), 
-		"Evaluate selected expression", 
-		errors
-	) then
+
+	if
+		setup_single_keymap(
+			keymaps.evaluate_visual,
+			"v",
+			create_protected_call(get_eval, "evaluate_selection", "Visual evaluation failed"),
+			"Evaluate selected expression",
+			errors
+		)
+	then
 		success_count = success_count + 1
 	end
-	
+
 	return success_count
 end
 
@@ -417,20 +428,22 @@ local function setup_memory_keymaps(keymaps, errors)
 		{ key = keymaps.memory_edit, method = "edit_memory_at_cursor", desc = "Edit memory/variable at cursor" },
 		{ key = keymaps.memory_popup, method = "show_memory_popup", desc = "Show memory popup at cursor" },
 	}
-	
+
 	local success_count = 0
 	for _, cmd in ipairs(memory_commands) do
-		if setup_single_keymap(
-			cmd.key, 
-			"n", 
-			create_protected_call(get_memory, cmd.method, "Memory operation failed"), 
-			cmd.desc, 
-			errors
-		) then
+		if
+			setup_single_keymap(
+				cmd.key,
+				"n",
+				create_protected_call(get_memory, cmd.method, "Memory operation failed"),
+				cmd.desc,
+				errors
+			)
+		then
 			success_count = success_count + 1
 		end
 	end
-	
+
 	return success_count
 end
 
@@ -440,18 +453,16 @@ end
 ---@return number success_count
 local function setup_variable_keymaps(keymaps, errors)
 	local success_count = 0
-	
+
 	-- Watch add
-	if setup_single_keymap(
-		keymaps.watch_add, 
-		"n", 
-		function()
+	if
+		setup_single_keymap(keymaps.watch_add, "n", function()
 			local available, error_msg = check_keymap_gdb_availability()
 			if not available then
 				vim.notify("Cannot add watch: " .. error_msg, vim.log.levels.ERROR)
 				return
 			end
-			
+
 			local ok, expr = pcall(vim.fn.input, "Watch expression: ")
 			if ok and expr ~= "" then
 				utils.async_gdb_response("display " .. expr, function(_, error)
@@ -462,30 +473,26 @@ local function setup_variable_keymaps(keymaps, errors)
 					end
 				end)
 			end
-		end,
-		"Add watch expression", 
-		errors
-	) then
+		end, "Add watch expression", errors)
+	then
 		success_count = success_count + 1
 	end
-	
+
 	-- Variable set
-	if setup_single_keymap(
-		keymaps.variable_set, 
-		"n", 
-		function()
+	if
+		setup_single_keymap(keymaps.variable_set, "n", function()
 			local available, error_msg = check_keymap_gdb_availability()
 			if not available then
 				vim.notify("Cannot set variable: " .. error_msg, vim.log.levels.ERROR)
 				return
 			end
-			
+
 			local var_ok, var = pcall(vim.fn.expand, "<cword>")
 			if not var_ok or var == "" then
 				vim.notify("No variable under cursor", vim.log.levels.WARN)
 				return
 			end
-			
+
 			local value_ok, value = pcall(vim.fn.input, "Set " .. var .. " = ")
 			if value_ok and value ~= "" then
 				utils.async_gdb_response("set variable " .. var .. " = " .. value, function(_, error)
@@ -496,13 +503,11 @@ local function setup_variable_keymaps(keymaps, errors)
 					end
 				end)
 			end
-		end,
-		"Set variable value", 
-		errors
-	) then
+		end, "Set variable value", errors)
+	then
 		success_count = success_count + 1
 	end
-	
+
 	return success_count
 end
 
@@ -557,7 +562,7 @@ function M.setup_keymaps(keymaps)
 	success_count = success_count + setup_evaluation_keymaps(keymaps, errors)
 	success_count = success_count + setup_memory_keymaps(keymaps, errors)
 	success_count = success_count + setup_variable_keymaps(keymaps, errors)
-	
+
 	local total_count = success_count + #errors
 
 	-- Report setup results
@@ -629,3 +634,4 @@ function M.cleanup_keymaps()
 end
 
 return M
+

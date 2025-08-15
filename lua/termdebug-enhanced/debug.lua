@@ -25,14 +25,14 @@ function M.test_popup()
 		"is working correctly.",
 		"",
 		"If you see this, the popup",
-		"functionality is working!"
+		"functionality is working!",
 	}
 
 	-- Use evaluate module's create_float_window if exported
 	-- Otherwise create a simple test window
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, test_content)
-	
+
 	local win_opts = {
 		relative = "cursor",
 		row = 1,
@@ -42,7 +42,7 @@ function M.test_popup()
 		style = "minimal",
 		border = popup_config.border or "rounded",
 	}
-	
+
 	local ok, win = pcall(vim.api.nvim_open_win, buf, false, win_opts)
 	if ok and win then
 		vim.notify("Test popup created successfully!", vim.log.levels.INFO)
@@ -74,11 +74,11 @@ function M.diagnose_gdb_functions()
 		"TermDebugCommand",
 		"Evaluate",
 		"Gdb",
-		"TermdebugEvaluate"
+		"TermdebugEvaluate",
 	}
 
 	for _, func_name in ipairs(functions_to_check) do
-		local exists = vim.fn.exists('*' .. func_name) == 1
+		local exists = vim.fn.exists("*" .. func_name) == 1
 		vim.notify("Function " .. func_name .. " exists: " .. tostring(exists), vim.log.levels.INFO)
 	end
 
@@ -92,12 +92,12 @@ function M.diagnose_gdb_functions()
 		"Run",
 		"Break",
 		"Clear",
-		"Evaluate"
+		"Evaluate",
 	}
 
 	vim.notify("--- Checking Termdebug Commands ---", vim.log.levels.INFO)
 	for _, cmd_name in ipairs(commands_to_check) do
-		local exists = vim.fn.exists(':' .. cmd_name) == 1
+		local exists = vim.fn.exists(":" .. cmd_name) == 1
 		vim.notify("Command :" .. cmd_name .. " exists: " .. tostring(exists), vim.log.levels.INFO)
 	end
 
@@ -115,7 +115,7 @@ function M.diagnose_gdb_functions()
 		"termdebug_running",
 		"termdebugger",
 		"termdebug_wide",
-		"gdb_channel"
+		"gdb_channel",
 	}
 
 	for _, var_name in ipairs(gdb_vars) do
@@ -142,9 +142,12 @@ function M.test_f10_keymap()
 
 	-- Test sending "next" command directly to GDB
 	vim.notify("Testing direct GDB 'next' command...", vim.log.levels.INFO)
-	if vim.fn.exists('*TermDebugSendCommand') == 1 then
+	if vim.fn.exists("*TermDebugSendCommand") == 1 then
 		local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "next")
-		vim.notify("Direct 'next' command result: " .. tostring(send_ok) .. ", error: " .. tostring(send_err), vim.log.levels.INFO)
+		vim.notify(
+			"Direct 'next' command result: " .. tostring(send_ok) .. ", error: " .. tostring(send_err),
+			vim.log.levels.INFO
+		)
 	else
 		vim.notify("TermDebugSendCommand not available", vim.log.levels.WARN)
 	end
@@ -174,7 +177,7 @@ function M.test_direct_evaluation()
 	vim.notify("Testing evaluation of: " .. word, vim.log.levels.INFO)
 
 	-- Send command directly and read buffer immediately
-	if vim.fn.exists('*TermDebugSendCommand') == 1 then
+	if vim.fn.exists("*TermDebugSendCommand") == 1 then
 		local send_ok = pcall(vim.fn.TermDebugSendCommand, "print " .. word)
 		vim.notify("Command sent: " .. tostring(send_ok), vim.log.levels.INFO)
 
@@ -185,7 +188,10 @@ function M.test_direct_evaluation()
 				if gdb_buf then
 					-- Get more lines to ensure we capture the response
 					local lines = vim.api.nvim_buf_get_lines(gdb_buf, -50, -1, false)
-					vim.notify("Recent GDB buffer lines (" .. #lines .. " lines): " .. vim.inspect(lines), vim.log.levels.INFO)
+					vim.notify(
+						"Recent GDB buffer lines (" .. #lines .. " lines): " .. vim.inspect(lines),
+						vim.log.levels.INFO
+					)
 
 					-- Try to find the response
 					local response_lines = {}
@@ -326,7 +332,7 @@ function M.test_gdb_response()
 			-- Create test popup
 			local buf = vim.api.nvim_create_buf(false, true)
 			vim.api.nvim_buf_set_lines(buf, 0, -1, false, test_content)
-			
+
 			local win_opts = {
 				relative = "cursor",
 				row = 1,
@@ -336,7 +342,7 @@ function M.test_gdb_response()
 				style = "minimal",
 				border = popup_config.border or "rounded",
 			}
-			
+
 			local ok, win = pcall(vim.api.nvim_open_win, buf, false, win_opts)
 			if ok and win then
 				vim.notify("GDB response popup created successfully!", vim.log.levels.INFO)
@@ -365,3 +371,4 @@ function M.setup_commands()
 end
 
 return M
+

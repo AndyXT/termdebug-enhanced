@@ -180,13 +180,13 @@ local function create_float_window(content, opts, is_error)
 		vim.notify("Failed to create evaluation buffer: " .. tostring(buf), vim.log.levels.ERROR)
 		return nil, nil
 	end
-	
+
 	-- Validate buffer creation
 	if not vim.api.nvim_buf_is_valid(buf) then
 		vim.notify("Buffer creation failed - invalid buffer", vim.log.levels.ERROR)
 		return nil, nil
 	end
-	
+
 	float_buf = buf
 
 	-- Track buffer for cleanup (with safe loading)
@@ -210,7 +210,7 @@ local function create_float_window(content, opts, is_error)
 	elseif type(content) == "table" then
 		lines = content
 	else
-		lines = {"No content provided"}
+		lines = { "No content provided" }
 	end
 
 	local set_ok, set_err = pcall(vim.api.nvim_buf_set_lines, float_buf, 0, -1, false, lines)
@@ -263,8 +263,8 @@ local function create_float_window(content, opts, is_error)
 		style = "minimal",
 		border = opts.border or "rounded",
 		noautocmd = true,
-		focusable = true,  -- Make it focusable for scrolling
-		zindex = 50,  -- Ensure it appears above other windows
+		focusable = true, -- Make it focusable for scrolling
+		zindex = 50, -- Ensure it appears above other windows
 	}
 
 	local win_ok, win = pcall(vim.api.nvim_open_win, float_buf, false, win_opts)
@@ -274,7 +274,7 @@ local function create_float_window(content, opts, is_error)
 		return nil, nil
 	end
 	float_win = win
-	
+
 	-- Validate window was created successfully
 	if not float_win or not vim.api.nvim_win_is_valid(float_win) then
 		vim.notify("Window creation failed - invalid window handle", vim.log.levels.ERROR)
@@ -303,8 +303,8 @@ local function create_float_window(content, opts, is_error)
 		vim.bo[float_buf].readonly = true
 		vim.bo[float_buf].buftype = "nofile"
 		vim.bo[float_buf].swapfile = false
-		vim.bo[float_buf].wrap = true  -- Enable word wrap for long lines
-		vim.bo[float_buf].linebreak = true  -- Break at word boundaries
+		vim.bo[float_buf].wrap = true -- Enable word wrap for long lines
+		vim.bo[float_buf].linebreak = true -- Break at word boundaries
 	end)
 
 	-- Add syntax highlighting for GDB output
@@ -319,8 +319,8 @@ local function create_float_window(content, opts, is_error)
 		local opts_map = { noremap = true, silent = true }
 
 		-- Scrolling keymaps
-		vim.api.nvim_buf_set_keymap(float_buf, "n", "j", "<C-e>", opts_map)  -- Scroll down
-		vim.api.nvim_buf_set_keymap(float_buf, "n", "k", "<C-y>", opts_map)  -- Scroll up
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "j", "<C-e>", opts_map) -- Scroll down
+		vim.api.nvim_buf_set_keymap(float_buf, "n", "k", "<C-y>", opts_map) -- Scroll up
 		vim.api.nvim_buf_set_keymap(float_buf, "n", "<Down>", "<C-e>", opts_map)
 		vim.api.nvim_buf_set_keymap(float_buf, "n", "<Up>", "<C-y>", opts_map)
 		vim.api.nvim_buf_set_keymap(float_buf, "n", "<PageDown>", "<C-f>", opts_map)
@@ -341,7 +341,7 @@ local function create_float_window(content, opts, is_error)
 				cleanup_float_window()
 			end,
 		})
-	end, 100)  -- 100ms delay
+	end, 100) -- 100ms delay
 
 	-- Add keybinding to close with Esc (with error handling)
 	pcall(vim.api.nvim_buf_set_keymap, float_buf, "n", "<Esc>", "", {
@@ -474,7 +474,6 @@ local function get_gdb_response(command, expression, callback)
 	end, { timeout = 3000, poll_interval = 50 })
 end
 
-
 ---Evaluate expression under cursor and show in popup
 ---
 ---Evaluates the variable or expression under the cursor and displays the result
@@ -493,7 +492,6 @@ end
 ---
 ---@return nil
 function M.evaluate_under_cursor()
-
 	local word = vim.fn.expand("<cexpr>")
 	if word == "" then
 		word = vim.fn.expand("<cword>")
@@ -503,7 +501,6 @@ function M.evaluate_under_cursor()
 		vim.notify("No expression under cursor", vim.log.levels.WARN)
 		return
 	end
-
 
 	-- Validate expression syntax
 	local valid, syntax_error = validate_expression(word)
@@ -535,7 +532,7 @@ function M.evaluate_under_cursor()
 			"expressions properly.",
 			"",
 			"This popup demonstrates that the",
-			"floating window functionality works."
+			"floating window functionality works.",
 		}
 
 		create_float_window(demo_content, config.popup, true)
@@ -547,33 +544,37 @@ function M.evaluate_under_cursor()
 	-- Add a timeout to detect if callback never gets called
 	local callback_called = false
 	local timeout_timer = vim.loop.new_timer()
-	
+
 	-- Start the timer with proper cleanup
-	timeout_timer:start(5000, 0, vim.schedule_wrap(function()
-		if not callback_called then
-			vim.notify("WARNING: GDB response timeout for '" .. word .. "'", vim.log.levels.WARN)
-			-- Show a fallback popup to indicate the issue
-			local popup_config = config.get_popup()
-			local fallback_content = {
-				"⚠ Evaluation Timeout",
-				string.rep("─", 30),
-				"",
-				"Expression: " .. word,
-				"",
-				"The GDB response was not received",
-				"within the expected time.",
-				"",
-				"Possible causes:",
-				"• GDB response polling failed",
-				"• Command not recognized by GDB",
-				"• Variable not in current scope"
-			}
-			create_float_window(fallback_content, config.popup, true)
-		end
-		-- Clean up the timer
-		timeout_timer:stop()
-		timeout_timer:close()
-	end))
+	timeout_timer:start(
+		5000,
+		0,
+		vim.schedule_wrap(function()
+			if not callback_called then
+				vim.notify("WARNING: GDB response timeout for '" .. word .. "'", vim.log.levels.WARN)
+				-- Show a fallback popup to indicate the issue
+				local popup_config = config.get_popup()
+				local fallback_content = {
+					"⚠ Evaluation Timeout",
+					string.rep("─", 30),
+					"",
+					"Expression: " .. word,
+					"",
+					"The GDB response was not received",
+					"within the expected time.",
+					"",
+					"Possible causes:",
+					"• GDB response polling failed",
+					"• Command not recognized by GDB",
+					"• Variable not in current scope",
+				}
+				create_float_window(fallback_content, config.popup, true)
+			end
+			-- Clean up the timer
+			timeout_timer:stop()
+			timeout_timer:close()
+		end)
+	)
 
 	get_gdb_response("print " .. word, word, function(response_lines, error_info)
 		callback_called = true
@@ -583,7 +584,6 @@ function M.evaluate_under_cursor()
 			timeout_timer:close()
 		end
 		local popup_config = config.get_popup()
-
 
 		if error_info then
 			-- Show error in popup

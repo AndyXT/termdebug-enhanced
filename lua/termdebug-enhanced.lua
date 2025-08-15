@@ -52,4 +52,3 @@ return {
 		require("termdebug-enhanced").setup(opts)
 	end,
 }
-

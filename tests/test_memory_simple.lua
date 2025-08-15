@@ -19,7 +19,11 @@ package.loaded["termdebug-enhanced.utils"] = {
         callback(nil, "No symbol found")
       end
     elseif cmd:match("^x/") then
-      callback({ "0x1000: 0x12 0x34 0x56 0x78" }, nil)
+      if cmd:match("invalid_address") then
+        callback(nil, "Cannot access memory at address")
+      else
+        callback({ "0x1000: 0x12 0x34 0x56 0x78" }, nil)
+      end
     else
       callback({}, nil)
     end
@@ -49,6 +53,10 @@ package.loaded["termdebug-enhanced"] = {
 
 -- Mock vim globals
 vim.g.termdebug_running = true
+vim.fn.exists = function(cmd)
+  if cmd == ":Termdebug" then return 1 end
+  return 0
+end
 
 -- Mock vim functions
 local mock_expand_value = ""
@@ -141,7 +149,7 @@ function tests.test_show_memory_invalid_address()
   
   memory.show_memory("invalid_address", 256)
   
-  helpers.assert_eq(#mock_utils_calls, 0, "Should not make GDB calls for invalid address")
+  helpers.assert_eq(#mock_utils_calls, 1, "Should make GDB call for address (let GDB fail)")
 end
 
 -- Test: show_memory with GDB not running

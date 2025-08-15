@@ -181,27 +181,30 @@ local function create_float_window(content, opts, is_error)
 	opts = opts or {}
 	is_error = is_error or false
 
-	-- Debug: Log function entry with more detail
+	-- Validate content type
 	local content_type = type(content)
-	local content_length = 0
-	if content_type == "table" then
-		content_length = #content
-	elseif content_type == "string" then
-		content_length = #vim.split(content, "\n")
+	if content_type ~= "table" and content_type ~= "string" then
+		vim.notify("Invalid content type for float window: " .. content_type, vim.log.levels.ERROR)
+		return nil, nil
 	end
-	vim.notify("create_float_window called with " .. content_length .. " lines (type: " .. content_type .. ")", vim.log.levels.INFO)
 
 	-- Close existing window if any
 	cleanup_float_window()
 
 	-- Create buffer for content
 	local ok, buf = pcall(vim.api.nvim_create_buf, false, true)
-	if not ok then
+	if not ok or not buf then
 		vim.notify("Failed to create evaluation buffer: " .. tostring(buf), vim.log.levels.ERROR)
 		return nil, nil
 	end
+	
+	-- Validate buffer creation
+	if not vim.api.nvim_buf_is_valid(buf) then
+		vim.notify("Buffer creation failed - invalid buffer", vim.log.levels.ERROR)
+		return nil, nil
+	end
+	
 	float_buf = buf
-	vim.notify("Created buffer: " .. buf, vim.log.levels.INFO)
 
 	-- Track buffer for cleanup (with safe loading)
 	resource_counter = resource_counter + 1
@@ -227,7 +230,6 @@ local function create_float_window(content, opts, is_error)
 		lines = {"No content provided"}
 	end
 
-	vim.notify("Setting buffer content: " .. vim.inspect(lines), vim.log.levels.INFO)
 	local set_ok, set_err = pcall(vim.api.nvim_buf_set_lines, float_buf, 0, -1, false, lines)
 	if not set_ok then
 		vim.notify("Failed to set buffer content: " .. tostring(set_err), vim.log.levels.ERROR)
@@ -282,7 +284,6 @@ local function create_float_window(content, opts, is_error)
 		zindex = 50,  -- Ensure it appears above other windows
 	}
 
-	vim.notify("Creating window with opts: " .. vim.inspect(win_opts), vim.log.levels.INFO)
 	local win_ok, win = pcall(vim.api.nvim_open_win, float_buf, false, win_opts)
 	if not win_ok then
 		vim.notify("Failed to create evaluation window: " .. tostring(win), vim.log.levels.ERROR)
@@ -290,7 +291,13 @@ local function create_float_window(content, opts, is_error)
 		return nil, nil
 	end
 	float_win = win
-	vim.notify("Created window: " .. win, vim.log.levels.INFO)
+	
+	-- Validate window was created successfully
+	if not float_win or not vim.api.nvim_win_is_valid(float_win) then
+		vim.notify("Window creation failed - invalid window handle", vim.log.levels.ERROR)
+		cleanup_float_window()
+		return nil, nil
+	end
 
 	-- Track window for cleanup (with safe loading)
 	local track_win_ok = pcall(function()
@@ -365,6 +372,65 @@ local function create_float_window(content, opts, is_error)
 	return float_win, float_buf
 end
 
+---Format evaluation response for display in popup
+---@param expression string The evaluated expression
+---@param response_lines string[]|nil Response lines from GDB
+---@return string[] Formatted lines for display
+local function format_evaluation_response(expression, response_lines)
+	local formatted = {}
+	table.insert(formatted, "✓ Expression: " .. expression)
+	table.insert(formatted, string.rep("─", math.max(40, #expression + 15)))
+
+	if response_lines and #response_lines > 0 then
+		local value = utils.extract_value(response_lines)
+		if value then
+			-- Format value based on type detection
+			local formatted_value = value
+
+			-- Detect and format different value types
+			if value:match("^0x%x+$") then
+				-- Hex value - show both hex and decimal
+				local hex_num = tonumber(value:sub(3), 16)
+				if hex_num then
+					formatted_value = string.format("%s (%d)", value, hex_num)
+				end
+			elseif value:match("^%-?%d+$") then
+				-- Integer - show hex representation if > 255
+				local num = tonumber(value)
+				if num and math.abs(num) > 255 then
+					formatted_value = string.format("%s (0x%x)", value, num)
+				end
+			elseif value:match("^{.*}$") then
+				-- Structure - format with proper indentation
+				formatted_value = value:gsub(", ", ",\n  ")
+			end
+
+			table.insert(formatted, "")
+			table.insert(formatted, "Value: " .. formatted_value)
+
+			-- Add type information if available from GDB response
+			local full_response = table.concat(response_lines, " ")
+			local type_info = full_response:match("%(([^%)]+)%)")
+			if type_info and not type_info:match("gdb") then
+				table.insert(formatted, "Type:  " .. type_info)
+			end
+		else
+			-- Show raw response if value extraction fails
+			table.insert(formatted, "")
+			for _, line in ipairs(response_lines) do
+				if line and line ~= "" and not line:match("^%(gdb%)") then
+					table.insert(formatted, line)
+				end
+			end
+		end
+	else
+		table.insert(formatted, "")
+		table.insert(formatted, "No output from GDB")
+	end
+
+	return formatted
+end
+
 ---Get GDB response using async polling with comprehensive error handling
 ---@param command string GDB command to execute
 ---@param expression string Original expression for error reporting
@@ -425,367 +491,6 @@ local function get_gdb_response(command, expression, callback)
 	end, { timeout = 3000, poll_interval = 50 })
 end
 
----Test function to verify popup creation works
----@return nil
-function M.test_popup()
-	vim.notify("Testing popup creation...", vim.log.levels.INFO)
-	local config = get_config()
-	local test_content = {
-		"✓ Test Popup",
-		"─────────────",
-		"",
-		"This is a test popup to verify",
-		"that the floating window creation",
-		"is working correctly.",
-		"",
-		"If you see this, the popup",
-		"functionality is working!"
-	}
-
-	local win, _ = create_float_window(test_content, config.popup, false)
-	if win then
-		vim.notify("Test popup created successfully!", vim.log.levels.INFO)
-	else
-		vim.notify("Test popup creation failed!", vim.log.levels.ERROR)
-	end
-end
-
----Diagnose available GDB functions and commands
----@return nil
-function M.diagnose_gdb_functions()
-	vim.notify("=== GDB Function Diagnostics ===", vim.log.levels.INFO)
-
-	-- Check basic termdebug availability
-	vim.notify("Termdebug command exists: " .. tostring(vim.fn.exists(":Termdebug") == 1), vim.log.levels.INFO)
-	vim.notify("Termdebug running: " .. tostring(vim.g.termdebug_running or false), vim.log.levels.INFO)
-
-	-- Check for various GDB command functions
-	local functions_to_check = {
-		"TermdebugCommand",
-		"TermDebugSendCommand",
-		"TermdebugSendCommand",
-		"TermDebugCommand",
-		"Evaluate",
-		"Gdb",
-		"TermdebugEvaluate"
-	}
-
-	for _, func_name in ipairs(functions_to_check) do
-		local exists = vim.fn.exists('*' .. func_name) == 1
-		vim.notify("Function " .. func_name .. " exists: " .. tostring(exists), vim.log.levels.INFO)
-	end
-
-	-- Check for termdebug commands
-	local commands_to_check = {
-		"Continue",
-		"Over",
-		"Step",
-		"Finish",
-		"Stop",
-		"Run",
-		"Break",
-		"Clear",
-		"Evaluate"
-	}
-
-	vim.notify("--- Checking Termdebug Commands ---", vim.log.levels.INFO)
-	for _, cmd_name in ipairs(commands_to_check) do
-		local exists = vim.fn.exists(':' .. cmd_name) == 1
-		vim.notify("Command :" .. cmd_name .. " exists: " .. tostring(exists), vim.log.levels.INFO)
-	end
-
-	-- Check for GDB buffer
-	local gdb_buf = utils.find_gdb_buffer()
-	vim.notify("GDB buffer found: " .. tostring(gdb_buf ~= nil), vim.log.levels.INFO)
-	if gdb_buf then
-		vim.notify("GDB buffer ID: " .. gdb_buf, vim.log.levels.INFO)
-		local buf_name = vim.api.nvim_buf_get_name(gdb_buf)
-		vim.notify("GDB buffer name: " .. buf_name, vim.log.levels.INFO)
-	end
-
-	-- Check global variables
-	local gdb_vars = {
-		"termdebug_running",
-		"termdebugger",
-		"termdebug_wide",
-		"gdb_channel"
-	}
-
-	for _, var_name in ipairs(gdb_vars) do
-		local value = vim.g[var_name]
-		vim.notify("vim.g." .. var_name .. " = " .. vim.inspect(value), vim.log.levels.INFO)
-	end
-
-	vim.notify("=== End GDB Diagnostics ===", vim.log.levels.INFO)
-end
-
----Test F10 keymap functionality
----@return nil
-function M.test_f10_keymap()
-	vim.notify("=== Testing F10 Keymap ===", vim.log.levels.INFO)
-
-	-- Check if F10 is mapped
-	local f10_mapping = vim.fn.maparg("<F10>", "n")
-	vim.notify("F10 mapping: " .. vim.inspect(f10_mapping), vim.log.levels.INFO)
-
-	-- Test the Over command directly
-	vim.notify("Testing :Over command directly...", vim.log.levels.INFO)
-	local over_ok, over_err = pcall(vim.cmd, "Over")
-	vim.notify("Over command result: " .. tostring(over_ok) .. ", error: " .. tostring(over_err), vim.log.levels.INFO)
-
-	-- Test sending "next" command directly to GDB
-	vim.notify("Testing direct GDB 'next' command...", vim.log.levels.INFO)
-	if vim.fn.exists('*TermDebugSendCommand') == 1 then
-		local send_ok, send_err = pcall(vim.fn.TermDebugSendCommand, "next")
-		vim.notify("Direct 'next' command result: " .. tostring(send_ok) .. ", error: " .. tostring(send_err), vim.log.levels.INFO)
-	else
-		vim.notify("TermDebugSendCommand not available", vim.log.levels.WARN)
-	end
-
-	-- Check current keymaps
-	vim.notify("Current normal mode keymaps containing F10:", vim.log.levels.INFO)
-	local keymaps = vim.api.nvim_get_keymap("n")
-	for _, keymap in ipairs(keymaps) do
-		if keymap.lhs and keymap.lhs:match("F10") then
-			vim.notify("Found F10 keymap: " .. vim.inspect(keymap), vim.log.levels.INFO)
-		end
-	end
-
-	vim.notify("=== End F10 Test ===", vim.log.levels.INFO)
-end
-
----Test evaluation with direct GDB buffer reading
----@return nil
-function M.test_direct_evaluation()
-	vim.notify("=== Testing Direct Evaluation ===", vim.log.levels.INFO)
-
-	local word = vim.fn.expand("<cword>")
-	if word == "" then
-		word = "test_var"
-	end
-
-	vim.notify("Testing evaluation of: " .. word, vim.log.levels.INFO)
-
-	-- Send command directly and read buffer immediately
-	if vim.fn.exists('*TermDebugSendCommand') == 1 then
-		local send_ok = pcall(vim.fn.TermDebugSendCommand, "print " .. word)
-		vim.notify("Command sent: " .. tostring(send_ok), vim.log.levels.INFO)
-
-		if send_ok then
-			-- Wait a moment then read the GDB buffer directly
-			vim.defer_fn(function()
-				local gdb_buf = utils.find_gdb_buffer()
-				if gdb_buf then
-					-- Get more lines to ensure we capture the response
-					local lines = vim.api.nvim_buf_get_lines(gdb_buf, -50, -1, false)
-					vim.notify("Recent GDB buffer lines (" .. #lines .. " lines): " .. vim.inspect(lines), vim.log.levels.INFO)
-
-					-- Try multiple approaches to find the response
-					local response_lines = {}
-
-					-- Approach 1: Look for $N = value pattern and capture multi-line response
-					local found_start = false
-					local start_index = nil
-
-					-- First, find where the response starts (the $N = line)
-					for i = #lines, 1, -1 do
-						local line = lines[i]
-						if line:match("%$%d+%s*=") then
-							start_index = i
-							found_start = true
-							vim.notify("Found $N = pattern at line " .. i .. ": " .. line, vim.log.levels.INFO)
-							break
-						end
-					end
-
-					-- If we found the start, capture all lines until the next (gdb) prompt
-					if found_start and start_index then
-						for i = start_index, #lines do
-							local line = lines[i]
-							if line:match("^%(gdb%)") then
-								-- Stop at the next GDB prompt
-								break
-							else
-								table.insert(response_lines, line)
-								vim.notify("Captured response line: " .. line, vim.log.levels.INFO)
-							end
-						end
-					end
-
-					-- Approach 2: If no $N pattern, look for lines after our print command
-					if #response_lines == 0 then
-						local found_print = false
-						for i = #lines, 1, -1 do
-							local line = lines[i]
-							if line:match("^%(gdb%)") and found_print then
-								break
-							elseif line:match("print") and line:match(vim.pesc(word)) then
-								found_print = true
-								vim.notify("Found print command: " .. line, vim.log.levels.INFO)
-							elseif found_print and not line:match("^%(gdb%)") and line ~= "" then
-								table.insert(response_lines, 1, line)
-								vim.notify("Found response line: " .. line, vim.log.levels.INFO)
-							end
-						end
-					end
-
-					-- Approach 3: If still nothing, look for any non-empty, non-gdb-prompt lines
-					if #response_lines == 0 then
-						vim.notify("No response found with standard patterns, checking all recent lines...", vim.log.levels.INFO)
-						for i = math.max(1, #lines - 5), #lines do
-							local line = lines[i]
-							if line and line ~= "" and not line:match("^%(gdb%)") and not line:match("^print") then
-								table.insert(response_lines, line)
-								vim.notify("Found potential response: " .. line, vim.log.levels.INFO)
-							end
-						end
-					end
-
-					vim.notify("Final extracted response: " .. vim.inspect(response_lines), vim.log.levels.INFO)
-
-					if #response_lines > 0 then
-						-- Create popup with the response
-						local config = get_config()
-						local content = {
-							"✓ Direct Evaluation: " .. word,
-							string.rep("─", math.max(30, #word + 20)),
-							"",
-							"Response found:",
-							""
-						}
-
-						-- Format response lines with proper wrapping
-						for _, line in ipairs(response_lines) do
-							-- Split very long lines for better display
-							if #line > 80 then
-								local wrapped_lines = {}
-								for i = 1, #line, 80 do
-									table.insert(wrapped_lines, line:sub(i, i + 79))
-								end
-								for _, wrapped_line in ipairs(wrapped_lines) do
-									table.insert(content, "  " .. wrapped_line)
-								end
-							else
-								table.insert(content, "  " .. line)
-							end
-						end
-
-						table.insert(content, "")
-						table.insert(content, "Use j/k or ↑/↓ to scroll, q/Esc to close")
-
-						local win, _ = create_float_window(content, config.popup, false)
-						if win then
-							vim.notify("Direct evaluation popup created!", vim.log.levels.INFO)
-						else
-							vim.notify("Failed to create popup", vim.log.levels.ERROR)
-						end
-					else
-						vim.notify("No response found in buffer", vim.log.levels.WARN)
-					end
-				else
-					vim.notify("GDB buffer not found", vim.log.levels.ERROR)
-				end
-			end, 500) -- Wait 500ms for response
-		end
-	else
-		vim.notify("TermDebugSendCommand not available", vim.log.levels.ERROR)
-	end
-
-	vim.notify("=== End Direct Evaluation Test ===", vim.log.levels.INFO)
-end
-
----Debug all buffers to find where GDB output is going
----@return nil
-function M.debug_all_buffers()
-	vim.notify("=== Debugging All Buffers ===", vim.log.levels.INFO)
-
-	local buffers = vim.api.nvim_list_bufs()
-	vim.notify("Found " .. #buffers .. " total buffers", vim.log.levels.INFO)
-
-	for _, buf in ipairs(buffers) do
-		if vim.api.nvim_buf_is_valid(buf) then
-			local name = vim.api.nvim_buf_get_name(buf)
-			local lines = vim.api.nvim_buf_get_lines(buf, -10, -1, false)
-
-			-- Check if this buffer contains GDB-like content
-			local has_gdb_content = false
-			for _, line in ipairs(lines) do
-				if line:match("%(gdb%)") or line:match("%$%d+%s*=") or line:match("print") then
-					has_gdb_content = true
-					break
-				end
-			end
-
-			if has_gdb_content or name:match("[Gg]db") or name:match("[Dd]ebug") then
-				vim.notify("Buffer " .. buf .. " (" .. name .. ") - GDB content detected:", vim.log.levels.INFO)
-				vim.notify("Last 10 lines: " .. vim.inspect(lines), vim.log.levels.INFO)
-			else
-				vim.notify("Buffer " .. buf .. " (" .. name .. ") - No GDB content", vim.log.levels.DEBUG)
-			end
-		end
-	end
-
-	-- Also check what find_gdb_buffer returns
-	local gdb_buf = utils.find_gdb_buffer()
-	vim.notify("utils.find_gdb_buffer() returned: " .. tostring(gdb_buf), vim.log.levels.INFO)
-
-	vim.notify("=== End Buffer Debug ===", vim.log.levels.INFO)
-end
-
----Test function to verify GDB response mechanism
----@return nil
-function M.test_gdb_response()
-	vim.notify("Testing GDB response mechanism...", vim.log.levels.INFO)
-
-	-- First run diagnostics
-	M.diagnose_gdb_functions()
-
-	-- Check if GDB is available
-	local available, availability_error = check_gdb_availability()
-	if not available then
-		vim.notify("GDB not available: " .. (availability_error or "unknown"), vim.log.levels.WARN)
-		return
-	end
-
-	vim.notify("GDB is available, testing response...", vim.log.levels.INFO)
-
-	-- Use simple GDB response for testing
-	utils.simple_gdb_response("print 42", function(response_lines, error_msg)
-		if error_msg then
-			vim.notify("GDB response test failed: " .. error_msg, vim.log.levels.ERROR)
-		else
-			vim.notify("GDB response test succeeded! Lines: " .. vim.inspect(response_lines), vim.log.levels.INFO)
-
-			-- Now test popup creation with the response
-			local config = get_config()
-			local test_content = {
-				"✓ GDB Response Test",
-				"─────────────────────",
-				"",
-				"Command: print 42",
-				"Response received successfully:",
-			}
-
-			if response_lines and #response_lines > 0 then
-				for _, line in ipairs(response_lines) do
-					table.insert(test_content, "  " .. line)
-				end
-			else
-				table.insert(test_content, "  (no response lines)")
-			end
-
-			table.insert(test_content, "")
-			table.insert(test_content, "This proves GDB communication works!")
-
-			local win, _ = create_float_window(test_content, config.popup, false)
-			if win then
-				vim.notify("GDB response popup created successfully!", vim.log.levels.INFO)
-			else
-				vim.notify("Failed to create popup with GDB response!", vim.log.levels.ERROR)
-			end
-		end
-	end)
-end
 
 ---Evaluate expression under cursor and show in popup
 ---
@@ -805,8 +510,6 @@ end
 ---
 ---@return nil
 function M.evaluate_under_cursor()
-	-- Debug: Add notification to verify function is called
-	vim.notify("evaluate_under_cursor called", vim.log.levels.INFO)
 
 	local word = vim.fn.expand("<cexpr>")
 	if word == "" then
@@ -818,7 +521,6 @@ function M.evaluate_under_cursor()
 		return
 	end
 
-	vim.notify("Evaluating word: " .. word, vim.log.levels.INFO)
 
 	-- Validate expression syntax
 	local valid, syntax_error = validate_expression(word)
@@ -836,8 +538,7 @@ function M.evaluate_under_cursor()
 	-- Check if GDB is available, if not show a demo popup
 	local available, availability_error = check_gdb_availability()
 	if not available then
-		vim.notify("GDB not available: " .. (availability_error or "unknown error"), vim.log.levels.WARN)
-		vim.notify("Showing demo popup instead...", vim.log.levels.INFO)
+		-- Show demo popup when GDB not available
 
 		local config = get_config()
 		local demo_content = {
@@ -858,14 +559,16 @@ function M.evaluate_under_cursor()
 		return
 	end
 
-	-- Use the full async GDB response now that we fixed the command sending
-	vim.notify("Using async GDB response with fixed command sending for: " .. word, vim.log.levels.INFO)
+	-- Use async GDB response for evaluation
 
 	-- Add a timeout to detect if callback never gets called
 	local callback_called = false
-	local timeout_timer = vim.defer_fn(function()
+	local timeout_timer = vim.loop.new_timer()
+	
+	-- Start the timer with proper cleanup
+	timeout_timer:start(5000, 0, vim.schedule_wrap(function()
 		if not callback_called then
-			vim.notify("WARNING: GDB response callback never called for '" .. word .. "' - response polling may have failed", vim.log.levels.WARN)
+			vim.notify("WARNING: GDB response timeout for '" .. word .. "'", vim.log.levels.WARN)
 			-- Show a fallback popup to indicate the issue
 			local config = get_config()
 			local fallback_content = {
@@ -884,91 +587,33 @@ function M.evaluate_under_cursor()
 			}
 			create_float_window(fallback_content, config.popup, true)
 		end
-	end, 5000) -- 5 second timeout
+		-- Clean up the timer
+		timeout_timer:stop()
+		timeout_timer:close()
+	end))
 
 	get_gdb_response("print " .. word, word, function(response_lines, error_info)
 		callback_called = true
-		-- Cancel the timeout timer since callback was called
-		if timeout_timer then
-			pcall(timeout_timer.close, timeout_timer)
+		-- Cancel and clean up the timeout timer
+		if timeout_timer and not timeout_timer:is_closing() then
+			timeout_timer:stop()
+			timeout_timer:close()
 		end
 		local config = get_config()
 
-		-- Debug: Add notification to verify callback is called
-		vim.notify("Evaluate callback called for: " .. word, vim.log.levels.INFO)
 
 		if error_info then
 			-- Show error in popup
 			local error_content = create_error_content(error_info)
-			vim.notify("Creating error popup for: " .. (error_info.message or "unknown error"), vim.log.levels.INFO)
 			create_float_window(error_content, config.popup, true)
 			return
 		end
 
-		-- Enhanced formatting with better value extraction and display
-		local formatted = {}
-		table.insert(formatted, "✓ Expression: " .. word)
-		table.insert(formatted, string.rep("─", math.max(40, #word + 15)))
-
-		if response_lines and #response_lines > 0 then
-			vim.notify("Got GDB response with " .. #response_lines .. " lines: " .. vim.inspect(response_lines), vim.log.levels.INFO)
-			local value = utils.extract_value(response_lines)
-			if value then
-				-- Format value based on type detection
-				local formatted_value = value
-
-				-- Detect and format different value types
-				if value:match("^0x%x+$") then
-					-- Hex value - show both hex and decimal
-					local hex_num = tonumber(value:sub(3), 16)
-					if hex_num then
-						formatted_value = string.format("%s (%d)", value, hex_num)
-					end
-				elseif value:match("^%-?%d+$") then
-					-- Integer - show hex representation if > 255
-					local num = tonumber(value)
-					if num and math.abs(num) > 255 then
-						formatted_value = string.format("%s (0x%x)", value, num)
-					end
-				elseif value:match("^{.*}$") then
-					-- Structure - format with proper indentation
-					formatted_value = value:gsub(", ", ",\n  ")
-				end
-
-				table.insert(formatted, "")
-				table.insert(formatted, "Value: " .. formatted_value)
-
-				-- Add type information if available from GDB response
-				local full_response = table.concat(response_lines, " ")
-				local type_info = full_response:match("%(([^%)]+)%)")
-				if type_info and not type_info:match("gdb") then
-					table.insert(formatted, "Type:  " .. type_info)
-				end
-			else
-				-- Show raw response if value extraction fails
-				table.insert(formatted, "")
-				for _, line in ipairs(response_lines) do
-					if line and line ~= "" and not line:match("^%(gdb%)") then
-						table.insert(formatted, line)
-					end
-				end
-			end
-		else
-			vim.notify("No response lines from GDB", vim.log.levels.WARN)
-			table.insert(formatted, "")
-			table.insert(formatted, "No output from GDB")
-		end
-
-		-- Debug: Notify before creating popup
-		vim.notify("Creating popup with " .. #formatted .. " lines: " .. vim.inspect(formatted), vim.log.levels.INFO)
+		-- Use common formatting function
+		local formatted = format_evaluation_response(word, response_lines)
 
 		-- Show in floating window
-		local win, buf = create_float_window(formatted, config.popup, false)
-		if win then
-			vim.notify("Popup created successfully: win=" .. win .. ", buf=" .. (buf or "nil"), vim.log.levels.INFO)
-		else
-			vim.notify("Failed to create popup window", vim.log.levels.ERROR)
-		end
+		create_float_window(formatted, config.popup, false)
 	end)
 end
 
@@ -1050,18 +695,8 @@ function M.evaluate_selection()
 			return
 		end
 
-		-- Format the output nicely
-		local formatted = {}
-		table.insert(formatted, "✓ Expression: " .. expr)
-		table.insert(formatted, string.rep("─", 40))
-
-		if response_lines and #response_lines > 0 then
-			for _, line in ipairs(response_lines) do
-				table.insert(formatted, line)
-			end
-		else
-			table.insert(formatted, "No output")
-		end
+		-- Use common formatting function
+		local formatted = format_evaluation_response(expr, response_lines)
 
 		-- Show in floating window
 		create_float_window(formatted, config.popup, false)
@@ -1117,18 +752,8 @@ function M.evaluate_custom(expr)
 			return
 		end
 
-		-- Format the output nicely
-		local formatted = {}
-		table.insert(formatted, "✓ Expression: " .. expr)
-		table.insert(formatted, string.rep("─", 40))
-
-		if response_lines and #response_lines > 0 then
-			for _, line in ipairs(response_lines) do
-				table.insert(formatted, line)
-			end
-		else
-			table.insert(formatted, "No output")
-		end
+		-- Use common formatting function
+		local formatted = format_evaluation_response(expr, response_lines)
 
 		-- Show in floating window
 		create_float_window(formatted, config.popup, false)

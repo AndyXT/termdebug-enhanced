@@ -606,6 +606,10 @@ function M.show_memory(address, size)
 				return
 			end
 
+			-- Update current memory state on successful memory read
+			current_memory.address = address
+			current_memory.size = size
+
 			-- Enhanced header with more information
 			local formatted = {
 				string.format("✓ Memory at %s (%d bytes, %s format):", address, size, format),

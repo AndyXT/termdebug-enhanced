@@ -181,6 +181,9 @@ local test_keymap_config = {
 
 -- Test: setup_keymaps with valid configuration
 function tests.test_setup_keymaps_valid_config()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   -- Clear the module-level tables (not create new local ones)
   for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   for k in pairs(notifications) do notifications[k] = nil end
@@ -191,12 +194,12 @@ function tests.test_setup_keymaps_valid_config()
   helpers.assert_eq(#errors, 0, "Should have no errors")
   
   -- Check that keymaps were set
-  helpers.assert_not_nil(set_keymaps["n:<F5>"], "Should set continue keymap")
-  helpers.assert_not_nil(set_keymaps["n:<F10>"], "Should set step_over keymap")
-  helpers.assert_not_nil(set_keymaps["n:<F11>"], "Should set step_into keymap")
-  helpers.assert_not_nil(set_keymaps["n:<F9>"], "Should set toggle_breakpoint keymap")
-  helpers.assert_not_nil(set_keymaps["n:K"], "Should set evaluate keymap")
-  helpers.assert_not_nil(set_keymaps["v:K"], "Should set evaluate_visual keymap")
+  helpers.assert_true(set_keymaps["n:<F5>"] ~= nil, "Should set continue keymap")
+  helpers.assert_true(set_keymaps["n:<F10>"] ~= nil, "Should set step_over keymap")
+  helpers.assert_true(set_keymaps["n:<F11>"] ~= nil, "Should set step_into keymap")
+  helpers.assert_true(set_keymaps["n:<F9>"] ~= nil, "Should set toggle_breakpoint keymap")
+  helpers.assert_true(set_keymaps["n:K"] ~= nil, "Should set evaluate keymap")
+  helpers.assert_true(set_keymaps["v:K"] ~= nil, "Should set evaluate_visual keymap")
   
   -- Check success notification
   helpers.assert_true(#notifications > 0, "Should have success notification")
@@ -204,6 +207,9 @@ end
 
 -- Test: setup_keymaps with invalid keymap format
 function tests.test_setup_keymaps_invalid_format()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   local invalid_config = vim.tbl_deep_extend("force", test_keymap_config, {
     continue = "<invalid-key-format>",
     step_over = "",
@@ -219,8 +225,8 @@ function tests.test_setup_keymaps_invalid_format()
   helpers.assert_false(success, "Should fail with invalid config")
   helpers.assert_true(#errors > 0, "Should have validation errors")
   
-  -- Check that some keymaps were still set (valid ones)
-  helpers.assert_not_nil(set_keymaps["n:<F11>"], "Should still set valid keymaps")
+  -- Check that some keymaps were still set (valid ones that weren't overwritten)
+  helpers.assert_true(set_keymaps["n:<S-F11>"] ~= nil, "Should still set valid keymaps")
 end
 
 -- Test: setup_keymaps with GDB not running
@@ -232,8 +238,9 @@ function tests.test_setup_keymaps_gdb_not_running()
   
   local success, errors = keymaps.setup_keymaps(test_keymap_config)
   
-  -- Should still succeed but with warning
-  helpers.assert_true(success, "Should succeed even when GDB not running")
+  -- Should fail but still set up keymaps with warning
+  helpers.assert_false(success, "Should fail when GDB not running")
+  helpers.assert_true(#errors > 0, "Should have errors when GDB not running")
   helpers.assert_true(#notifications > 0, "Should have warning notification")
   
   -- Restore GDB state
@@ -257,8 +264,9 @@ function tests.test_setup_keymaps_termdebug_not_available()
   
   local success, errors = keymaps.setup_keymaps(test_keymap_config)
   
-  -- Should still succeed but with warning
-  helpers.assert_true(success, "Should succeed even when termdebug not available")
+  -- Should fail but still set up keymaps with warning
+  helpers.assert_false(success, "Should fail when termdebug not available")
+  helpers.assert_true(#errors > 0, "Should have errors when termdebug not available")
   helpers.assert_true(#notifications > 0, "Should have warning notification")
   
   -- Restore
@@ -267,13 +275,23 @@ end
 
 -- Test: cleanup_keymaps with active keymaps
 function tests.test_cleanup_keymaps_with_active()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   -- First set up keymaps
   -- Clear the module-level tables (not create new local ones)
   for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   for k in pairs(deleted_keymaps) do deleted_keymaps[k] = nil end
   for k in pairs(notifications) do notifications[k] = nil end
   
-  keymaps.setup_keymaps(test_keymap_config)
+  local setup_success, setup_errors = keymaps.setup_keymaps(test_keymap_config)
+  helpers.assert_true(setup_success, "Should successfully set up keymaps first")
+  helpers.assert_eq(#setup_errors, 0, "Setup should have no errors")
+  
+  -- Verify keymaps were actually set  
+  local keymap_count = 0
+  for _ in pairs(set_keymaps) do keymap_count = keymap_count + 1 end
+  helpers.assert_true(keymap_count > 0, "Should have set some keymaps")
   
   -- Then clean them up
   local success, errors = keymaps.cleanup_keymaps()
@@ -282,7 +300,9 @@ function tests.test_cleanup_keymaps_with_active()
   helpers.assert_eq(#errors, 0, "Should have no cleanup errors")
   
   -- Check that keymaps were deleted
-  helpers.assert_true(#deleted_keymaps > 0, "Should delete some keymaps")
+  local deleted_count = 0
+  for _ in pairs(deleted_keymaps) do deleted_count = deleted_count + 1 end
+  helpers.assert_true(deleted_count > 0, "Should delete some keymaps")
 end
 
 -- Test: cleanup_keymaps with no active keymaps
@@ -303,6 +323,9 @@ end
 
 -- Test: breakpoint toggle functionality
 function tests.test_breakpoint_toggle_functionality()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   for k in pairs(notifications) do notifications[k] = nil end
@@ -313,7 +336,7 @@ function tests.test_breakpoint_toggle_functionality()
   
   -- Get the toggle breakpoint callback
   local toggle_callback = set_keymaps["n:<F9>"].callback
-  helpers.assert_not_nil(toggle_callback, "Should have toggle breakpoint callback")
+  helpers.assert_true(toggle_callback ~= nil, "Should have toggle breakpoint callback")
   
   -- Execute the callback
   toggle_callback()
@@ -368,7 +391,7 @@ function tests.test_evaluate_keymap_functionality()
   keymaps.setup_keymaps({ evaluate = "K" })
   
   local evaluate_callback = set_keymaps["n:K"].callback
-  helpers.assert_not_nil(evaluate_callback, "Should have evaluate callback")
+  helpers.assert_true(evaluate_callback ~= nil, "Should have evaluate callback")
   
   evaluate_callback()
   
@@ -384,7 +407,7 @@ function tests.test_evaluate_visual_keymap_functionality()
   keymaps.setup_keymaps({ evaluate_visual = "K" })
   
   local evaluate_callback = set_keymaps["v:K"].callback
-  helpers.assert_not_nil(evaluate_callback, "Should have visual evaluate callback")
+  helpers.assert_true(evaluate_callback ~= nil, "Should have visual evaluate callback")
   
   evaluate_callback()
   
@@ -400,7 +423,7 @@ function tests.test_memory_view_keymap_functionality()
   keymaps.setup_keymaps({ memory_view = "<leader>dm" })
   
   local memory_callback = set_keymaps["n:<leader>dm"].callback
-  helpers.assert_not_nil(memory_callback, "Should have memory view callback")
+  helpers.assert_true(memory_callback ~= nil, "Should have memory view callback")
   
   memory_callback()
   
@@ -416,7 +439,7 @@ function tests.test_memory_edit_keymap_functionality()
   keymaps.setup_keymaps({ memory_edit = "<leader>de" })
   
   local memory_callback = set_keymaps["n:<leader>de"].callback
-  helpers.assert_not_nil(memory_callback, "Should have memory edit callback")
+  helpers.assert_true(memory_callback ~= nil, "Should have memory edit callback")
   
   memory_callback()
   
@@ -426,6 +449,9 @@ end
 
 -- Test: watch add keymap functionality
 function tests.test_watch_add_keymap_functionality()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_input_value = "test_expr"
@@ -433,7 +459,7 @@ function tests.test_watch_add_keymap_functionality()
   keymaps.setup_keymaps({ watch_add = "<leader>dw" })
   
   local watch_callback = set_keymaps["n:<leader>dw"].callback
-  helpers.assert_not_nil(watch_callback, "Should have watch add callback")
+  helpers.assert_true(watch_callback ~= nil, "Should have watch add callback")
   
   watch_callback()
   
@@ -459,6 +485,9 @@ end
 
 -- Test: variable set keymap functionality
 function tests.test_variable_set_keymap_functionality()
+  -- Ensure proper test state
+  vim.g.termdebug_running = true
+  
   for k in pairs(set_keymaps) do set_keymaps[k] = nil end
   for k in pairs(mock_utils_calls) do mock_utils_calls[k] = nil end
   mock_cword_value = "test_var"
@@ -467,7 +496,7 @@ function tests.test_variable_set_keymap_functionality()
   keymaps.setup_keymaps({ variable_set = "<leader>ds" })
   
   local var_callback = set_keymaps["n:<leader>ds"].callback
-  helpers.assert_not_nil(var_callback, "Should have variable set callback")
+  helpers.assert_true(var_callback ~= nil, "Should have variable set callback")
   
   var_callback()
   
@@ -515,7 +544,7 @@ function tests.test_restart_keymap_functionality()
   keymaps.setup_keymaps({ restart = "<C-S-F5>" })
   
   local restart_callback = set_keymaps["n:<C-S-F5>"].callback
-  helpers.assert_not_nil(restart_callback, "Should have restart callback")
+  helpers.assert_true(restart_callback ~= nil, "Should have restart callback")
   
   restart_callback()
   

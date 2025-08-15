@@ -13,6 +13,8 @@
 - `c` - Compare current memory with register 'm'
 - `r` - Refresh current view
 - `e` - Edit memory interactively
+- `h` - Hex format | `d` - Decimal format | `b` - Binary format | `6` - Base64 format
+- `f` - Cycle through all formats
 
 ## Simple Workflow (Recommended)
 

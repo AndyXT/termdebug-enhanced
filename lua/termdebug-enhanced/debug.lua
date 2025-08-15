@@ -8,25 +8,14 @@
 local M = {}
 
 local utils = require("termdebug-enhanced.utils")
-
----Get plugin configuration safely
----@return table
-local function get_config()
-	local ok, main = pcall(require, "termdebug-enhanced")
-	if ok and main and type(main) == "table" and main.config and type(main.config) == "table" then
-		return main.config
-	end
-	return {
-		popup = { border = "rounded", width = 60, height = 10 },
-	}
-end
+local config = require("termdebug-enhanced.config")
 
 ---Test function to verify popup creation works
 ---@return nil
 function M.test_popup()
 	vim.notify("Testing popup creation...", vim.log.levels.INFO)
 	local evaluate = require("termdebug-enhanced.evaluate")
-	local config = get_config()
+	local popup_config = config.get_popup()
 	local test_content = {
 		"✓ Test Popup",
 		"─────────────",
@@ -51,7 +40,7 @@ function M.test_popup()
 		width = 40,
 		height = #test_content,
 		style = "minimal",
-		border = config.popup.border or "rounded",
+		border = popup_config.border or "rounded",
 	}
 	
 	local ok, win = pcall(vim.api.nvim_open_win, buf, false, win_opts)
@@ -314,7 +303,7 @@ function M.test_gdb_response()
 			vim.notify("GDB response test succeeded! Lines: " .. vim.inspect(response_lines), vim.log.levels.INFO)
 
 			-- Now test popup creation with the response
-			local config = get_config()
+			local popup_config = config.get_popup()
 			local test_content = {
 				"✓ GDB Response Test",
 				"─────────────────────",
@@ -345,7 +334,7 @@ function M.test_gdb_response()
 				width = 50,
 				height = #test_content,
 				style = "minimal",
-				border = config.popup.border or "rounded",
+				border = popup_config.border or "rounded",
 			}
 			
 			local ok, win = pcall(vim.api.nvim_open_win, buf, false, win_opts)

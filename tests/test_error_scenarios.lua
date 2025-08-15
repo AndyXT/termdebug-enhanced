@@ -306,6 +306,21 @@ function tests.test_cleanup_after_errors()
     
     package.loaded["termdebug-enhanced.utils"] = setup_helper.create_mock_utils(test_state)
     
+    -- Mock GDB availability for keymaps
+    vim.g.termdebug_running = true
+    vim.fn.exists = function(cmd)
+        if cmd == ":Continue" or cmd == ":Over" or cmd == ":Step" or cmd == ":Finish" or cmd == ":Termdebug" then
+            return 2
+        end
+        return 0
+    end
+    
+    -- Mock TermDebugSendCommand
+    vim.fn.TermDebugSendCommand = function(cmd)
+        table.insert(test_state.mock_calls.utils_calls, { command = cmd })
+        return true
+    end
+    
     local keymaps = require("termdebug-enhanced.keymaps")
     
     -- Set up keymaps
@@ -313,7 +328,13 @@ function tests.test_cleanup_after_errors()
         continue = "<F5>",
         step_over = "<F10>",
     })
-    helpers.assert_true(ok1, "Setup should succeed: " .. tostring(err1))
+    if not ok1 then
+        print("Keymap setup failed with errors:")
+        for _, err in ipairs(err1 or {}) do
+            print("  - " .. err)
+        end
+    end
+    helpers.assert_true(ok1, "Setup should succeed")
     
     -- Verify keymaps were created
     local keymap_count = 0

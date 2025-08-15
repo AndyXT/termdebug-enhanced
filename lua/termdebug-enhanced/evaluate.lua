@@ -10,6 +10,7 @@
 local M = {}
 
 local utils = require("termdebug-enhanced.utils")
+local config = require("termdebug-enhanced.config")
 
 -- Cache for the floating window with resource tracking
 ---@type number|nil
@@ -19,24 +20,6 @@ local float_buf = nil
 
 -- Resource tracking ID counter
 local resource_counter = 0
-
----Get plugin configuration safely with fallback defaults
----
----Attempts to load the main plugin configuration, falling back to sensible
----defaults if the configuration is not available or not yet initialized.
----This prevents errors during module loading or early initialization.
----
----@return table Configuration object with popup settings
-local function get_config()
-  local ok, main = pcall(require, "termdebug-enhanced")
-  if ok and main and type(main) == "table" and main.config and type(main.config) == "table" then
-    return main.config
-  end
-	-- Return default config if not initialized
-	return {
-		popup = { border = "rounded", width = 60, height = 10 },
-	}
-end
 
 ---Validate expression syntax for GDB evaluation
 ---
@@ -530,8 +513,8 @@ function M.evaluate_under_cursor()
 			message = syntax_error or "Invalid expression syntax",
 			expression = word,
 		})
-		local config = get_config()
-		create_float_window(error_content, config.popup, true)
+		local popup_config = config.get_popup()
+		create_float_window(error_content, popup_config, true)
 		return
 	end
 
@@ -540,7 +523,7 @@ function M.evaluate_under_cursor()
 	if not available then
 		-- Show demo popup when GDB not available
 
-		local config = get_config()
+		local popup_config = config.get_popup()
 		local demo_content = {
 			"⚠ Demo Mode - GDB Not Available",
 			string.rep("─", 40),
@@ -570,7 +553,7 @@ function M.evaluate_under_cursor()
 		if not callback_called then
 			vim.notify("WARNING: GDB response timeout for '" .. word .. "'", vim.log.levels.WARN)
 			-- Show a fallback popup to indicate the issue
-			local config = get_config()
+			local popup_config = config.get_popup()
 			local fallback_content = {
 				"⚠ Evaluation Timeout",
 				string.rep("─", 30),
@@ -599,7 +582,7 @@ function M.evaluate_under_cursor()
 			timeout_timer:stop()
 			timeout_timer:close()
 		end
-		local config = get_config()
+		local popup_config = config.get_popup()
 
 
 		if error_info then
@@ -680,13 +663,13 @@ function M.evaluate_selection()
 			message = syntax_error or "Invalid expression syntax",
 			expression = expr,
 		})
-		local config = get_config()
-		create_float_window(error_content, config.popup, true)
+		local popup_config = config.get_popup()
+		create_float_window(error_content, popup_config, true)
 		return
 	end
 
 	get_gdb_response("print " .. expr, expr, function(response_lines, error_info)
-		local config = get_config()
+		local popup_config = config.get_popup()
 
 		if error_info then
 			-- Show error in popup
@@ -737,13 +720,13 @@ function M.evaluate_custom(expr)
 			message = syntax_error or "Invalid expression syntax",
 			expression = expr,
 		})
-		local config = get_config()
-		create_float_window(error_content, config.popup, true)
+		local popup_config = config.get_popup()
+		create_float_window(error_content, popup_config, true)
 		return
 	end
 
 	get_gdb_response("print " .. expr, expr, function(response_lines, error_info)
-		local config = get_config()
+		local popup_config = config.get_popup()
 
 		if error_info then
 			-- Show error in popup

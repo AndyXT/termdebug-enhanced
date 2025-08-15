@@ -37,51 +37,11 @@
 ---@class termdebug-enhanced
 local M = {}
 
----@type TermdebugConfig
-M.config = {
-    debugger = "arm-none-eabi-gdb.exe",
-    gdbinit = ".gdbinit",
-    
-    popup = {
-        border = "rounded",
-        width = 60,
-        height = 10,
-        position = "cursor",
-    },
-    
-    memory_viewer = {
-        width = 80,
-        height = 20,
-        format = "hex",
-        bytes_per_line = 16,
-    },
-    
-    keymaps = {
-        continue = "<F5>",
-        step_over = "<F10>",
-        step_into = "<F11>",
-        step_out = "<S-F11>",
-        toggle_breakpoint = "<F9>",
-        stop = "<S-F5>",
-        restart = "<C-S-F5>",
-        evaluate = "K",
-        evaluate_visual = "<leader>K",
-        watch_add = "<leader>dw",
-        watch_remove = "<leader>dW",
-        memory_view = "<leader>dm",
-        memory_edit = "<leader>dM",
-        memory_popup = "<leader>dp",
-        variable_set = "<leader>ds",
-    },
-}
+local lib = require("termdebug-enhanced.lib")
+local default_config = require("termdebug-enhanced.config").defaults
 
----Safe module loading helper
----@param module_name string Module name to load
----@return table|nil module Module or nil if failed
-local function safe_require(module_name)
-    local ok, module = pcall(require, module_name)
-    return ok and module or nil
-end
+---@type TermdebugConfig
+M.config = vim.deepcopy(default_config)
 
 ---Setup termdebug configuration
 local function setup_termdebug()
@@ -98,7 +58,7 @@ local function setup_autocmds()
         group = group,
         callback = function()
             vim.g.termdebug_running = true
-            local keymaps = safe_require("termdebug-enhanced.keymaps")
+            local keymaps = lib.safe_require("termdebug-enhanced.keymaps")
             if keymaps and keymaps.setup_keymaps then
                 keymaps.setup_keymaps(M.config.keymaps)
                 vim.notify("Termdebug Enhanced: Active", vim.log.levels.INFO)
@@ -111,7 +71,7 @@ local function setup_autocmds()
         group = group,
         callback = function()
             vim.g.termdebug_running = false
-            local keymaps = safe_require("termdebug-enhanced.keymaps")
+            local keymaps = lib.safe_require("termdebug-enhanced.keymaps")
             if keymaps and keymaps.cleanup_keymaps then
                 keymaps.cleanup_keymaps()
             end
@@ -145,7 +105,7 @@ function M.cleanup_all_resources()
     }
     
     for i, module_name in ipairs(modules) do
-        local module = safe_require(module_name)
+        local module = lib.safe_require(module_name)
         local cleanup_func = cleanup_functions[i]
         if module and module[cleanup_func] then
             pcall(module[cleanup_func])
@@ -155,27 +115,34 @@ end
 
 ---Setup the plugin
 ---@param opts table|nil Configuration options
----@return boolean success
+---@return boolean success, table|nil errors
 function M.setup(opts)
+    -- Validate opts is a table or nil
+    if opts ~= nil and type(opts) ~= "table" then
+        local err = "Configuration must be a table, got " .. type(opts)
+        vim.notify(err, vim.log.levels.ERROR)
+        return false, {err}
+    end
+    
     -- Merge configuration
     M.config = vim.tbl_deep_extend("force", M.config, opts or {})
     
     -- Validate configuration
-    local validation = safe_require("termdebug-enhanced.validation")
+    local validation = lib.safe_require("termdebug-enhanced.validation")
     if validation then
         local valid, errors = validation.validate_config(M.config)
         if not valid then
             vim.notify("Configuration errors:\n" .. table.concat(errors, "\n"), vim.log.levels.ERROR)
-            return false
+            return false, errors
         end
     end
     
     -- Setup components
-    local setup_ok = pcall(function()
+    local setup_ok, setup_err = pcall(function()
         setup_termdebug()
         setup_autocmds()
         
-        local commands = safe_require("termdebug-enhanced.commands")
+        local commands = lib.safe_require("termdebug-enhanced.commands")
         if commands and commands.setup_commands then
             commands.setup_commands(M.config)
         end
@@ -183,10 +150,10 @@ function M.setup(opts)
     
     if setup_ok then
         vim.notify("Termdebug Enhanced setup completed", vim.log.levels.INFO)
-        return true
+        return true, {}
     else
         vim.notify("Termdebug Enhanced setup failed", vim.log.levels.ERROR)
-        return false
+        return false, {tostring(setup_err)}
     end
 end
 
@@ -205,7 +172,7 @@ function M.print_diagnostics()
 end
 
 -- Export validation for runtime use
-M.validate = safe_require("termdebug-enhanced.validation")
+M.validate = lib.safe_require("termdebug-enhanced.validation")
 if M.validate then
     M.validate = M.validate.validate
 end

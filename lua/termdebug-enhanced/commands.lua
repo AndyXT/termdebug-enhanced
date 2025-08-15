@@ -1,13 +1,7 @@
 ---@class Commands
 local M = {}
 
----Safe module loading helper
----@param module_name string Module name to load
----@return table|nil module Module or nil if failed
-local function safe_require(module_name)
-    local ok, module = pcall(require, module_name)
-    return ok and module or nil
-end
+local lib = require("termdebug-enhanced.lib")
 
 ---Create command with module loading
 ---@param name string Command name
@@ -16,7 +10,7 @@ end
 ---@param opts table Command options
 local function create_module_command(name, module_name, func_name, opts)
     vim.api.nvim_create_user_command(name, function(args)
-        local module = safe_require(module_name)
+        local module = lib.safe_require(module_name)
         if module and module[func_name] then
             if args.args ~= "" then
                 module[func_name](args.args)
@@ -24,28 +18,19 @@ local function create_module_command(name, module_name, func_name, opts)
                 module[func_name]()
             end
         else
-            vim.notify("Failed to load " .. module_name, vim.log.levels.ERROR)
+            lib.error("Failed to load " .. module_name)
         end
     end, opts)
 end
 
----Check termdebug availability
----@return boolean available
-local function check_termdebug()
-    if vim.fn.exists(":Termdebug") == 0 then
-        local ok = pcall(vim.cmd, "packadd termdebug")
-        return ok and vim.fn.exists(":Termdebug") ~= 0
-    end
-    return true
-end
 
 ---Create all user commands
 ---@param config table Plugin configuration
 function M.setup_commands(config)
     -- Main debugging commands
     vim.api.nvim_create_user_command("TermdebugStart", function(args)
-        if not check_termdebug() then
-            vim.notify("Termdebug not available", vim.log.levels.ERROR)
+        if not lib.is_termdebug_available() then
+            lib.error("Termdebug not available")
             return
         end
 
@@ -61,7 +46,7 @@ function M.setup_commands(config)
         
         local ok, err = pcall(vim.cmd, table.concat(cmd_parts, " "))
         if not ok then
-            vim.notify("Failed to start termdebug: " .. tostring(err), vim.log.levels.ERROR)
+            lib.error("Failed to start termdebug: " .. tostring(err))
         end
     end, { nargs = "*", desc = "Start termdebug with enhanced features" })
 
@@ -82,7 +67,7 @@ function M.setup_commands(config)
 
     -- Diagnostic command
     vim.api.nvim_create_user_command("TermdebugDiagnose", function()
-        local init = safe_require("termdebug-enhanced")
+        local init = lib.safe_require("termdebug-enhanced")
         if init and init.print_diagnostics then
             init.print_diagnostics()
         end

@@ -13,6 +13,7 @@
 local M = {}
 
 local utils = require("termdebug-enhanced.utils")
+local config = require("termdebug-enhanced.config")
 
 -- State management
 local current_memory = {
@@ -26,25 +27,7 @@ local current_memory = {
 local memory_win, memory_buf = nil, nil
 local popup_win, popup_buf = nil, nil
 
--- Configuration
-local DEFAULT_CONFIG = {
-	width = 80,
-	height = 20,
-	format = "hex",
-	bytes_per_line = 16,
-}
-
 local VALID_FORMATS = {"hex", "decimal", "binary", "base64"}
-
----Get configuration with fallback defaults
----@return table
-local function get_config()
-	local ok, main = pcall(require, "termdebug-enhanced")
-	if ok and main and main.config and main.config.memory_viewer then
-		return vim.tbl_deep_extend("force", DEFAULT_CONFIG, main.config.memory_viewer)
-	end
-	return DEFAULT_CONFIG
-end
 
 -- Validation functions
 local validators = {
@@ -144,7 +127,7 @@ local function show_error_window(error_info, window_type)
 	if window_type == "popup" then
 		create_popup_window(content, {}, true)
 	else
-		create_memory_window(content, get_config(), true)
+		create_memory_window(content, config.get_memory_viewer(), true)
 	end
 end
 
@@ -609,7 +592,7 @@ function M.show_memory(address, size)
 			end
 			
 			local formatted = format_memory_response(response, current_memory.format, address, size)
-			create_memory_window(formatted, get_config(), false)
+			create_memory_window(formatted, config.get_memory_viewer(), false)
 		end)
 	end, "show_memory")
 end

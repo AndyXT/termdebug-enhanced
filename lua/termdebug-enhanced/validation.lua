@@ -1,6 +1,8 @@
 ---@class Validation
 local M = {}
 
+local lib = require("termdebug-enhanced.lib")
+
 ---Validate string field
 ---@param value any Value to validate
 ---@param field_name string Field name for error message
